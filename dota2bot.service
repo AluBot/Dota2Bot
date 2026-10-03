@@ -1,0 +1,23 @@
+; sudo nano /etc/systemd/system/dota2bot.service
+; sudo systemctl daemon-reload
+; sudo systemctl enable dota2bot
+; sudo systemctl start dota2bot
+; sudo systemctl restart dota2bot
+; sudo systemctl stop dota2bot
+; sudo journalctl -u dota2bot -e
+
+[Unit]
+Description=dota2bot
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/ubuntu/Dota2Bot/
+ExecStart=/home/ubuntu/.local/bin/uv run --no-dev src/main.py
+; ExecStart=/home/ubuntu/Dota2Bot/.venv/bin/python3.14 src/main.py
+User=ubuntu
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

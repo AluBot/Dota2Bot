@@ -1,0 +1,162 @@
+[project]
+name = "steamrichpresencewatcher"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "asyncpg>=0.31.0",
+    "discord-py[speed]>=2.7.1",
+    "orjson>=3.12.0",
+    "pydantic-settings>=2.15.0",
+    "steamio>=1.2.0",
+]
+
+[tool.uv.sources]
+steamio = { git = "https://github.com/Aluerie/steam.py", rev = "introduce-ext.dota2" }
+
+
+[tool.pyright]
+exclude = [".venv", "docs", "**/__pycache__", "**/node_modules", "**/.*"]
+pythonVersion = "3.14"
+deprecateTypingAliases = true
+typeCheckingMode = "strict"
+venvPath = "."
+venv = ".venv"
+allowedUntypedLibraries = []
+
+# reportCallInDefaultInitializer = "warning"
+# reportImplicitOverride = "warning"
+# reportImplicitStringConcatenation = "none"
+# reportImportCycles = "none"
+# reportMissingSuperCall = "none"
+# reportPropertyTypeMismatch = "warning"
+# reportUninitializedInstanceVariable = "warning"
+# reportUnnecessaryTypeIgnoreComment = "warning"
+# reportUnreachable = "warning"
+# reportUnusedCallResult = "none"
+
+# reportDuplicateImport = "none"
+# # reportIncompatibleMethodOverride = "none"
+# # reportIncompatibleVariableOverride = "none"
+# # reportMissingTypeStubs = "none"
+
+[tool.ruff]
+line-length = 125
+target-version = "py314"
+preview = false
+exclude = [".venv"]
+src = ["src"]
+
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "ERA",      # eradicate
+    "W191",     # tab-indentation
+    "E111",     # indentation-with-invalid-multiple
+    "E114",     # indentation-with-invalid-multiple-comment 
+    "E117",     # over-indented
+    "D206",     # docstring-tab-indentation
+    "D300",     # triple-single-quotes 
+    "Q000",     # bad-quotes-inline-string
+    "Q001",     # bad-quotes-multiline-string
+    "Q002",     # bad-quotes-docstring
+    "Q003",     # avoidable-escaped-quote
+    "COM812",   # missing-trailing-comma
+    "COM819",   # prohibited-trailing-comma
+    "ISC002",   # multi-line-implicit-string-concatenation
+    "ANN401",
+    "ASYNC116",
+    "ASYNC109",
+    "C90",
+    "CPY001",
+    "F401",
+    "F402",
+    "F403",
+    "F405",
+    "FBT003",
+    "FIX",
+    "INP001",
+    "PD011",
+    "PLC0415",
+    "PLR0904",
+    "PLR0911",
+    "PLR0912",
+    "PLR0913",
+    "PLR0914",
+    "PLR0915",
+    "PLR0917",
+    "PLR6301",
+    "PLR2004",
+    "PYI058",
+    "RUF001",
+    "RUF029",
+    "S101",
+    "S311",
+    "SIM105",
+    "SLF001",
+    "TD",
+    "TRY003",
+    "TRY301",
+    "FLY002",
+    "PLW2901",
+    "S608",
+    "TID252",
+    "D100",
+    "D104",
+    "D105",
+    "D107",
+    "D401",
+    "DOC201",
+    "DOC402",
+    "DOC501",
+]
+unfixable = ["E501", "ERA", "RUF100"]
+flake8-annotations.allow-star-arg-any = true
+flake8-quotes.inline-quotes = "double"
+
+[tool.ruff.lint.per-file-ignores]
+"modules/beta.py" = ["ANN201"]
+"*.ipynb" = [
+    "I001",
+    "ANN201",
+    "ANN204",
+    "D",
+    "DOC",
+    "ERA",
+    "F404",
+    "T20",
+    "W391",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "lf"
+
+[tool.ruff.lint.isort]
+split-on-trailing-comma = true
+combine-as-imports = true
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.pytest]
+pythonpath = ["src"]
+addopts = ["-vv", "-p", "no:cacheprovider", "--disable-warnings"]
+norecursedirs = ["env/*", "venv/*", ".venv/*"]
+filterwarnings = ["ignore::DeprecationWarning"]
+testpaths = ["tests/"]
+python_files = ["test_*.py"]
+asyncio_mode = "auto"
+
+[tool.esbonio.sphinx]
+pythonCommand = ["uv", "run", "python"]
+cwd = "/docs"
+
+[dependency-groups]
+dev = [
+    "asyncpg-stubs>=0.31.3",
+]
