@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import logging
 import platform
+import sys
 from typing import TYPE_CHECKING, Any, override
 
+import steam
 from steam import PersonaState
 from steam.ext import dota2
 
@@ -24,6 +26,7 @@ from .stratz import StratzClient
 if TYPE_CHECKING:
     from aiohttp import ClientSession
 
+    from cogs.friends.models import Streamer
     from shared.concepts import db
 
 log = logging.getLogger(__name__)
@@ -54,10 +57,13 @@ class Dota2Bot(dota2.Bot):
         self.stratz = StratzClient(bearer_token=env.STRATZ_BEARER, session=session)
         self.web_api = SteamWebAPIClient(api_key=env.STEAM_API_KEY, session=session)
 
+        self.streamers: dict[int, Streamer] = {}
+
     async def before_login(self) -> None:
         """Before login."""
         await self.load_extension("cogs.datafeed")
         await self.load_extension("cogs.meta")
+        await self.load_extension("cogs.friends")
 
     async def _before_login(self) -> None:
         """Start helping services for steam."""
@@ -72,7 +78,19 @@ class Dota2Bot(dota2.Bot):
             username, password = env.STEAM_IRENESBOT_USERNAME, env.STEAM_IRENESBOT_PASSWORD
         else:
             username, password = env.STEAM_IRENESTEST_USERNAME, env.STEAM_IRENESTEST_PASSWORD
-        await super().login(username, password)
+
+        # A potential workaround for steam login issues
+        # https://github.com/Gobot1234/steam.py/issues/446
+        # My service / docker files are set to restart the bot on exits
+        # So it will keep restarting the bot until Steam Issues are resolved.
+        try:
+            await super().login(username, password)
+        except steam.errors.NoCMsFound:
+            log.critical("🔴 Encountered `steam.errors.NoCMsFound` - restarting. 🔴")
+            sys.exit(1)
+        except steam.errors.LoginError:
+            log.critical("🔴 Encountered `steam.errors.LoginError` - restarting. 🔴")
+            sys.exit(1)
 
     @override
     async def on_ready(self) -> None:

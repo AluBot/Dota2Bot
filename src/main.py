@@ -11,10 +11,13 @@ import logging
 import platform
 
 import aiohttp
+import uvicorn
 
 from config import env
 from core.bot import Dota2Bot
 from shared.concepts import db, logs
+from web.app import MyFastAPI
+from web.router import router
 
 log = logging.getLogger(__name__)
 
@@ -29,7 +32,11 @@ async def start_the_bot() -> None:
         pool as pool,
         Dota2Bot(session=session, pool=pool) as bot,
     ):
-        await bot.login()
+        web_app = MyFastAPI(bot)
+        web_app.include_router(router)
+        config = uvicorn.Config(web_app)
+        server = uvicorn.Server(config)
+        await asyncio.gather(bot.login(), server.serve())
 
 
 def launch() -> None:
@@ -40,7 +47,7 @@ def launch() -> None:
         try:
             asyncio.run(start_the_bot())
         except KeyboardInterrupt:
-            log.critical("Closing the event loop")
+            log.info("Closing the event loop")
 
 
 if __name__ == "__main__":

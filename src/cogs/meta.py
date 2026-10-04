@@ -8,10 +8,12 @@ from core import Dota2Bot
 class MetaCog(commands.Cog[Dota2Bot]):
     """MetaCog."""
 
-    @commands.command(aliases=["hi", "yo"])
-    async def hello(self, ctx: commands.Context) -> None:
+    @commands.command(aliases=["hi", "yo"])  # ty: ignore[invalid-argument-type]
+    async def hello(self, ctx: commands.Context[Dota2Bot]) -> None:
         """Hello."""
-        await ctx.send("hello")
+        users = await self.bot.user.friends()
+        result = [user.id for user in users]
+        await ctx.send(result)
 
 
 async def setup(bot: Dota2Bot) -> None:
