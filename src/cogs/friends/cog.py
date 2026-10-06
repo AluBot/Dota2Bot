@@ -12,7 +12,7 @@ from shared import clock
 from shared.concepts import tasks
 
 from . import activities, enums
-from .models import PlayingMatch, RichPresence, SpectatingMatch, Streamer
+from .models import PlayingMatch, RichPresence, SpectatingMatch, Streamer, UnsupportedMatch
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.DEBUG)
@@ -128,6 +128,9 @@ class FriendsCog(commands.Cog[Dota2Bot]):
                 if watching_server not in self.bot.spectate_matches:
                     self.bot.spectate_matches[watching_server] = SpectatingMatch(self.bot, watching_server)
                 streamer.live_match = self.bot.spectate_matches[watching_server]
+
+            case activities.UnsupportedPartialMatch():
+                streamer.live_match = UnsupportedMatch(self.bot, message=streamer.activity.msg)
 
             case _:
                 # Incomplete activities - wait for confirmed activities.

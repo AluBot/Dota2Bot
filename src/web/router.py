@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING, Any, cast
 import steam
 from fastapi import APIRouter, Request
 
+from cogs.friends.tools import rank_medal_display_name
+
 if TYPE_CHECKING:
     from core import Dota2Bot
 
@@ -44,18 +46,31 @@ async def minimal(match_id: int, request: Request) -> dict[str, Any]:
     }
 
 
-@router.get("/user/{argument}")
-async def user(argument: str, request: Request) -> dict[str, Any]:
+@router.get("/convert/{argument:path}", name="path-convertor")
+async def convert(argument: str, request: Request) -> dict[str, Any]:
     bot: Dota2Bot = cast("Dota2Bot", request.app.bot)
 
     try:
         user = await bot.fetch_user(steam.utils.parse_id64(argument))
     except steam.InvalidID:
         id64 = await steam.utils.id64_from_url(argument)
-        if id64 is None:
-            user = None
-        user = await bot.fetch_user(id64)
+        user = await bot.fetch_user(id64) if id64 is not None else None
     except TimeoutError:
         user = None
 
     return {"id": None if user is None else user.id}
+
+
+@router.get("/profile_card/{friend_id}")
+async def profile_card(friend_id: int, request: Request) -> dict[str, Any]:
+    bot: Dota2Bot = cast("Dota2Bot", request.app.bot)
+
+    profile_card = await bot.create_partial_user(friend_id).dota2_profile_card()
+    return {"medal": rank_medal_display_name(profile_card)}
+
+
+@router.get("/user/{user_id}")
+async def user(user_id: int, request: Request) -> dict[str, Any]:
+    bot: Dota2Bot = cast("Dota2Bot", request.app.bot)
+    user = await bot.fetch_user(user_id)
+    return {"name": user.name}

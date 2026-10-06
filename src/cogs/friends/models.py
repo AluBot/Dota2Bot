@@ -15,6 +15,7 @@ from shared import clock, errors
 from shared.concepts import tasks
 
 from . import activities, enums
+from .tools import rank_medal_display_name
 
 if TYPE_CHECKING:
     from core import Dota2Bot
@@ -179,11 +180,19 @@ class Streamer:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "id": self.steam.id,
+            "name": self.steam.name,
             "is_playing_dota": self.is_playing_dota(),
+            "status": self.rich_presence.status,
             "rich_presence": str(self.rich_presence),
+            "raw_rich_presence": self.rich_presence.raw,
             "activity": str(self.activity),
             "live_match": self.live_match.to_dict() if self.live_match else None,
         }
+
+    @override
+    def __repr__(self) -> str:
+        return f'<{self.__class__.__name__} name="{self.steam.name}" id={self.steam.id}>'
 
 
 @dataclass
@@ -210,16 +219,6 @@ class Player:
     def __bool__(self) -> bool:
         return bool(self.friend_id)
 
-    @staticmethod
-    def _rank_medal_display_name(profile_card: dota2.ProfileCard) -> str:
-        """Get human-readable rank medal string out of player's Dota 2 Profile Card."""
-        display_name = profile_card.rank_tier.division
-        if stars := profile_card.rank_tier.stars:
-            display_name += f" \N{BLACK STAR}{stars}"
-        if number_rank := profile_card.leaderboard_rank:
-            display_name += f" #{number_rank}"
-        return display_name
-
     @classmethod
     async def create(cls, bot: Dota2Bot, account_id: int, player_slot: int) -> Player:
         partial_user = bot.create_partial_user(account_id)
@@ -229,7 +228,7 @@ class Player:
             friend_id=account_id,
             player_slot=player_slot,
             lifetime_games=profile_card.lifetime_games,
-            medal=Player._rank_medal_display_name(profile_card),
+            medal=rank_medal_display_name(profile_card),
         )
 
     @property
@@ -242,7 +241,7 @@ class Player:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "friend_id": self.friend_id,
+            "id": self.friend_id,
             "player_slot": self.player_slot,
             "color": self.color,
             "lifetime_games": self.lifetime_games,
@@ -251,9 +250,10 @@ class Player:
 
 
 class LiveMatch:
-    def __init__(self, bot: Dota2Bot, tag: str) -> None:
+    def __init__(self, bot: Dota2Bot, tag: str, message: str = "") -> None:
         self.bot: Dota2Bot = bot
         self.tag: str = tag
+        self.message: str = message
 
         # Common match data
         self.match_id: int | None = None
@@ -287,6 +287,7 @@ class LiveMatch:
     def to_dict(self) -> dict[str, Any]:
         return {
             "tag": self.tag,
+            "message": self.message,
             "ready": self.ready,
             "match_id": self.match_id,
             "lobby_type": self.lobby_type,
@@ -294,9 +295,14 @@ class LiveMatch:
             "game_mode": self.game_mode,
             "game_mode_name": self.game_mode.display_name if self.game_mode else "",
             "server_steam_id": self.server_steam_id,
-            "players": [player.to_dict() for player in self.players],
-            "heroes": [hero.id for hero in self.heroes],
-            "hero_names": [hero.name for hero in self.heroes],
+            "players": [
+                player.to_dict()
+                | {
+                    "hero_id": hero.id,
+                    "hero_name": hero.name if hero else "",
+                }
+                for player, hero in zip(self.players, self.heroes, strict=True)
+            ],
             "started_at": self.started_at,
             "average_mmr": self.average_mmr,
         }
@@ -431,3 +437,16 @@ class PlayingMatch(LiveMatch):
 
             self.ready = True
             self.update_data.stop()
+
+
+class UnsupportedMatch(LiveMatch):
+    """A class describing unsupported matches.
+
+    All chat commands for objects of this type should return unsupported message response.
+    For example, if streamer is playing Demo Mode, then the bot should only respond with "Demo Mode is not supported",
+    because, well, there is no data in Demo Mode to insect.
+    """
+
+    def __init__(self, bot: Dota2Bot, message: str = "") -> None:
+        super().__init__(bot, tag="unsupported")
+        self.message = message
