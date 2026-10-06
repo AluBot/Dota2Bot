@@ -402,7 +402,7 @@ class PlayingMatch(LiveMatch):
 
         if self.players_data_ready.is_set() and self.heroes_data_ready.is_set():
             # add to the database
-            if self.lobby_type == dota2.LobbyType.Practice:
+            if self.lobby_type != dota2.LobbyType.Practice:
                 # These lobby types do not leave any trace for match history purposes
                 # I.e. after playing in a practice lobby - there is
                 # no match to inspect in match history, opendota, etc;
@@ -412,11 +412,13 @@ class PlayingMatch(LiveMatch):
 
                 query = """
                     INSERT INTO ttv_dota_matches
-                    (match_id, start_time, lobby_type, game_mode)
-                    VALUES ($1, $2, $3, $4)
+                    (match_id, start_time, lobby_type, game_mode, live)
+                    VALUES ($1, $2, $3, $4, $5)
                     ON CONFLICT (match_id) DO NOTHING;
                 """
-                await self.bot.pool.execute(query, self.match_id, match.start_time, self.lobby_type, self.game_mode)
+                await self.bot.pool.execute(
+                    query, self.match_id, match.start_time, self.lobby_type, self.game_mode, self.state
+                )
 
                 for streamer in self.streamers:
                     if streamer.rich_presence.status == enums.Status.Coaching:

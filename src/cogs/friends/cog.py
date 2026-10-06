@@ -12,7 +12,7 @@ from shared import clock
 from shared.concepts import tasks
 
 from . import activities, enums
-from .models import PlayingMatch, RichPresence, SpectatingMatch, Streamer, UnsupportedMatch
+from .models import PlayingMatch, RichPresence, SpectatingMatch, Streamer, UnsupportedMatch, LiveMatch
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.DEBUG)
@@ -147,7 +147,7 @@ class FriendsCog(commands.Cog[Dota2Bot]):
         This nulls `Friend.live_match` attribute as well as adds the match into the database
         if it's a `PlayingMatch`.
         """
-        match = streamer.live_match
+        match: LiveMatch | None = streamer.live_match
         if isinstance(match, PlayingMatch) and match.match_id:
             if match.state == enums.PlayingMatchState.Live:
                 match.state = enums.PlayingMatchState.Pending
