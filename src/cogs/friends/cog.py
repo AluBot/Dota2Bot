@@ -256,11 +256,19 @@ class FriendsCog(commands.Cog[Dota2Bot]):
 
         query = """
             INSERT INTO ttv_dota_matches
-            (match_id, start_time, lobby_type, game_mode, outcome)
-            VALUES ($1, $2, $3, $4, $5)
+                (match_id, start_time, lobby_type, game_mode, outcome, live)
+            VALUES ($1, $2, $3, $4, $5, $6)
             ON CONFLICT (match_id) DO NOTHING;
         """
-        await self.bot.pool.execute(query, match.id, match.start_time, match.lobby_type, match.game_mode, minimal.outcome)
+        await self.bot.pool.execute(
+            query,
+            match.id,
+            match.start_time,
+            match.lobby_type,
+            match.game_mode,
+            minimal.outcome,
+            enums.PlayingMatchState.Completed,
+        )
         player_slot = next((slot for slot, player in enumerate(minimal.players) if player.hero == match.hero), None)
         assert player_slot is not None, "Somehow `player_slot` is `None` in match history match"
 

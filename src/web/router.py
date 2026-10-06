@@ -72,5 +72,5 @@ async def profile_card(friend_id: int, request: Request) -> dict[str, Any]:
 @router.get("/user/{user_id}")
 async def user(user_id: int, request: Request) -> dict[str, Any]:
     bot: Dota2Bot = cast("Dota2Bot", request.app.bot)
-    user = await bot.fetch_user(user_id)
+    user = await bot.fetch_user(steam.utils.parse_id64(user_id))
     return {"name": user.name}
