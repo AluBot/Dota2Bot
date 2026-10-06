@@ -183,7 +183,7 @@ class Streamer:
             "id": self.steam.id,
             "name": self.steam.name,
             "is_playing_dota": self.is_playing_dota(),
-            "status": self.rich_presence.status,
+            "status": self.rich_presence.status.display_name,
             "rich_presence": str(self.rich_presence),
             "raw_rich_presence": self.rich_presence.raw,
             "activity": str(self.activity),
