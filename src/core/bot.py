@@ -18,15 +18,15 @@ from steam import PersonaState
 from steam.ext import dota2
 
 from config import env
-
-from .opendota import OpenDotaClient
-from .steam_web_api import SteamWebAPIClient
-from .stratz import StratzClient
+from shared.concepts.base_bot import BotBase
+from shared.dota_apis.opendota import OpenDotaClient
+from shared.dota_apis.steam_web_api import SteamWebAPIClient
+from shared.dota_apis.stratz import StratzClient
 
 if TYPE_CHECKING:
     from aiohttp import ClientSession
 
-    from cogs.friends.models import Streamer
+    from cogs.friends.models import PlayingMatch, SpectatingMatch, Streamer
     from shared.concepts import db
 
 log = logging.getLogger(__name__)
@@ -34,7 +34,7 @@ log = logging.getLogger(__name__)
 __all__ = ("Dota2Bot",)
 
 
-class Dota2Bot(dota2.Bot):
+class Dota2Bot(BotBase, dota2.Bot):
     """Subclass for SteamIO's Client.
 
     Used to communicate with Dota 2 Game Coordinator in order to track information about my profile real-time.
@@ -48,16 +48,32 @@ class Dota2Bot(dota2.Bot):
         # steam_web_api: str,
         # stratz_bearer: str,
     ) -> None:
-        super().__init__(command_prefix="!", state=PersonaState.Online)
+
         self.started: bool = False
         self.session: ClientSession = session
         self.pool: db.PoolTypedWithAny = pool
+
+        if platform.system() == "Linux":
+            # self.username is used internally by steamio
+            self._username: str = env.STEAM_IRENESBOT_USERNAME
+            self._password: str = env.STEAM_IRENESBOT_PASSWORD
+            self.error_ping = "<@&1116171071528374394>"
+        else:
+            self._username: str = env.STEAM_IRENESTEST_USERNAME
+            self._password: str = env.STEAM_IRENESTEST_PASSWORD
+            self.error_ping = "<@&1337106675433340990>"
+
+        super().__init__(self.session, env.WEBHOOK_ERROR, self.error_ping)
+        super(dota2.Bot, self).__init__(command_prefix="!", state=PersonaState.Online)
 
         self.opendota = OpenDotaClient(session=session)
         self.stratz = StratzClient(bearer_token=env.STRATZ_BEARER, session=session)
         self.web_api = SteamWebAPIClient(api_key=env.STEAM_API_KEY, session=session)
 
+        # Attributes needed for `cogs.friends`
         self.streamers: dict[int, Streamer] = {}
+        self.play_matches: dict[str, PlayingMatch] = {}
+        self.spectate_matches: dict[str, SpectatingMatch] = {}
 
     async def before_login(self) -> None:
         """Before login."""
@@ -74,17 +90,12 @@ class Dota2Bot(dota2.Bot):
     @override
     async def login(self, *args: Any, **kwargs: Any) -> None:
         await self._before_login()
-        if platform.system() == "Linux":
-            username, password = env.STEAM_IRENESBOT_USERNAME, env.STEAM_IRENESBOT_PASSWORD
-        else:
-            username, password = env.STEAM_IRENESTEST_USERNAME, env.STEAM_IRENESTEST_PASSWORD
-
         # A potential workaround for steam login issues
         # https://github.com/Gobot1234/steam.py/issues/446
         # My service / docker files are set to restart the bot on exits
         # So it will keep restarting the bot until Steam Issues are resolved.
         try:
-            await super().login(username, password)
+            await super().login(self._username, self._password)
         except steam.errors.NoCMsFound:
             log.critical("🔴 Encountered `steam.errors.NoCMsFound` - restarting. 🔴")
             sys.exit(1)

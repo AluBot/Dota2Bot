@@ -5,32 +5,20 @@ import datetime
 import functools
 import itertools
 import logging
-import pprint
 from dataclasses import dataclass
-from operator import attrgetter
-from typing import TYPE_CHECKING, Annotated, Any, TypedDict, TypeVar, override
-from urllib import parse as url_parse
+from typing import TYPE_CHECKING, Any, TypedDict, TypeVar, override
 
 import steam
 from discord.utils import MISSING
-from modules import DEV_REQUIRED, PUBLIC_D9MMRBOT
 from steam.ext import dota2
-from twitchio.ext import commands
-from utils import guards
 
-from config import env
-from core import IrePublicComponent, ireloop
-from shared import dota2 as dota2utils, errors, fmt
-
-from .enums import Status
+from core import ireloop
+from shared import dota2 as dota2utils, errors
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
 
-    from utils.dota2 import SteamUserUpdate
-
-    from core import IreBot, IreContext
-    from shared.dota2 import api_schemas as dota2_api_schemas
+    from core import IreBot
 
     type ActiveMatch = PlayingMatch | SpectatingMatch | UnsupportedActivity
 
@@ -70,116 +58,6 @@ class Score:
     losses: int
     abandons: int
     pending: int
-
-
-@dataclass(slots=True)
-class Activity:
-    """A base class for Activities.
-
-    Activity is a somehow umbrella-term. The purpose of this term is to group Steam Rich Presence statuses
-    into certain categories that make sense from bot's view.
-
-    Dev Note
-    --------
-    * I'm not sure if I like this implementation.
-        Maybe we need to combine Play Watch Match with this and combine all the classes?
-    """
-
-    @override
-    def __str__(self) -> str:
-        return f"<{self.__class__.__name__}>"
-
-
-@dataclass(slots=True)
-class Dashboard(Activity): ...
-
-
-@dataclass(slots=True)
-class PlayingPartial(Activity):
-    """Partial Playing Match.
-
-    Partial in a sense that full `PlayingMatch` objects get built from objects of `PlayingPartial` class.
-    """
-
-    watchable_game_id: str
-
-
-@dataclass(slots=True)
-class SpectatingPartial(Activity):
-    """Partial Spectating Match.
-
-    Partial in a sense that full `SpectatingMatch` objects get built from objects of `SpectatingPartial` class.
-    """
-
-    watching_server: str
-
-
-@dataclass(slots=True)
-class UnsupportedPartial(Activity):
-    """Partial Unsupported Match.
-
-    Partial in a sense that full `UnsupportedMatch` objects get built from objects of `UnsupportedPartial` class.
-    """
-
-    msg: str
-
-
-@dataclass(slots=True)
-class Incomplete(Activity):
-    msg: str
-
-
-@dataclass(slots=True)
-class Unknown(Activity): ...
-
-
-class RichPresence:
-    """Class representing Steam Rich Presence.
-
-    Normally Rich Presence is just a dictionary of data.
-    This class adds some utility for GameFlow component to use.
-    """
-
-    def __init__(self, raw: dict[str, str] | None) -> None:
-        self.raw: dict[str, str] = raw or {}
-        self.status = Status.try_value(raw.get("status", "#MY_NO_STATUS")) if raw else Status.RichPresenceNone
-
-    @override
-    def __repr__(self) -> str:
-        return f"<{self.__class__.__name__} status={self.status.name}>"
-
-    @override
-    def __eq__(self, other: object) -> bool:
-        # we need to exclude `param1` from comparison because for Dota 2 Rich Presence it's usually a hero level
-        # which is pointless for the gameflow logic to know. Hopefully, this decision won't bite me in the future.
-
-        # https://stackoverflow.com/a/70145635/19217368
-        ignore_keys: set[str] = {"param1"}
-        return isinstance(other, RichPresence) and ignore_keys.issuperset(
-            k for (k, _) in other.raw.items() ^ self.raw.items()
-        )
-
-    @override
-    def __hash__(self) -> int:
-        return hash(self.raw)
-
-
-class Friend:
-    def __init__(self, bot: IreBot, steam_user: dota2.User) -> None:
-        self._bot: IreBot = bot
-        self.steam_user: dota2.User = steam_user
-        self.rich_presence: RichPresence = RichPresence(steam_user.rich_presence)
-        self.active_match: PlayingMatch | SpectatingMatch | UnsupportedActivity | None = None
-        self.activity: Activity = Incomplete("Haven't received any RP updates yet.")
-
-    @override
-    def __repr__(self) -> str:
-        return f'<{self.__class__.__name__} name="{self.steam_user.name}" id={self.steam_user.id}>'
-
-    @property
-    def is_playing_dota(self) -> bool:
-        """Whether this friend is playing dota or not."""
-        return bool(app := self.steam_user.app) and app.id == 570
 
 
 @dataclass
@@ -276,96 +154,6 @@ class LiveMatch:
         return bool(self.heroes) and all(bool(hero) for hero in self.heroes)
 
     @format_match_response
-    async def game_medals(self) -> str:
-        """Response for !gm command."""
-        if not self.players:
-            return "No players data yet."
-
-        response_parts = [
-            f"{hero or player.color} {player.medal or '?'}" for player, hero in zip(self.players, self.heroes, strict=True)
-        ]
-        return " \N{BULLET} ".join(response_parts)  # [:5]) + " VS " + ", ".join(response_parts[5:])
-
-    @format_match_response
-    async def ranked(self) -> str:
-        """Response for !ranked command."""
-        if not self.lobby_type or not self.game_mode:
-            return "No lobby data yet."
-
-        yes_no = "Yes" if self.lobby_type == dota2.LobbyType.Ranked else "No"
-        return f"{yes_no}, it's {self.lobby_type.display_name} ({self.game_mode.display_name})"
-
-    @format_match_response
-    async def smurfs(self) -> str:
-        """Response for !smurfs command."""
-        if not self.players:
-            return "No players data yet."
-
-        response_parts = [
-            f"{hero or player.color} {player.lifetime_games}"
-            for player, hero in sorted(
-                zip(self.players, self.heroes, strict=True), key=lambda x: attrgetter("lifetime_games")(x[0])
-            )
-        ]
-        return "Lifetime Games: " + " \N{BULLET} ".join(response_parts)
-
-    @format_match_response
-    async def profile(self, argument: str) -> str:
-        """Response for !profile command."""
-        if not self.players:
-            return "No player data yet."
-
-        hero, player_slot = dota2utils.extract_hero_index(argument, self.heroes)
-        return f"{hero} stratz.com/players/{self.players[player_slot].friend_id}"
-
-    @format_match_response
-    async def stats(self, argument: str) -> str:
-        """Response for !stats command."""
-        if not self.players:
-            return "No player data yet."
-        if not self.server_steam_id:
-            return "This match doesn't support real time stats"
-        if self.lobby_type == dota2.LobbyType.NewPlayerMode:
-            return "New Player Mode matches do not support real time stats."
-
-        hero, player_slot = dota2utils.extract_hero_index(argument, self.heroes)
-
-        match = await self.bot.dota2.web_api.get_real_time_stats(self.server_steam_id)
-
-        # We have to loop through teams in order to support Custom and Event Games
-        # Since the amount of players in the team can be variable.
-        for team in match["teams"]:
-            for player in team["players"]:
-                if player["heroid"] == hero:
-                    api_player = player
-                    break
-            else:
-                continue
-            break
-        else:
-            msg = f"Somehow couldn't find the player {player_slot=} with {hero=} in the game."
-            raise errors.SomethingWentWrongError(msg)
-
-        prefix = f"[2m delay] {api_player['name']} {dota2.Hero.try_value(api_player['heroid'])} lvl {api_player['level']}"
-        net_worth = f"NW: {api_player['net_worth']}"
-        kda = f"{api_player['kill_count']}/{api_player['death_count']}/{api_player['assists_count']}"
-        cs = f"CS: {api_player['lh_count']}"
-
-        # https://stackoverflow.com/a/35456954/19217368
-        query = """
-            SELECT item_id, display_name
-            FROM dota_constants_items
-            JOIN unnest($1::int[]) WITH ORDINALITY t(item_id, ord) USING (item_id)
-            ORDER BY t.ord;
-        """
-        player_items_dict: dict[int, str] = {
-            r["item_id"]: r["display_name"] for r in await self.bot.pool.fetch(query, api_player["items"])
-        }
-        items: str = ", ".join([player_items_dict.get(item, "Unknown Item") for item in api_player["items"] if item != -1])
-        response_parts = (prefix, net_worth, kda, cs, items)
-        return " \N{BULLET} ".join(response_parts)
-
-    @format_match_response
     async def lead(self) -> str:
         """Response for !lead command."""
         if not self.server_steam_id:
@@ -378,11 +166,6 @@ class LiveMatch:
         word = "Radiant" if lead > 0 else "Dire"
 
         return f"[2m delay] Radiant {radiant['score']} - Dire {dire['score']}: {word} is leading by {abs(lead) / 1000:.1f}k"
-
-    @format_match_response
-    async def match_id_command(self) -> str:
-        """Response for !match_id command."""
-        return str(self.match_id)
 
     @format_match_response
     async def notable_players(self) -> str:

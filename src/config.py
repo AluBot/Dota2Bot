@@ -25,6 +25,7 @@ class Env(EnvConfig):
     STEAM_IRENESBOT_PASSWORD: str
     STRATZ_BEARER: str
     STEAM_API_KEY: str
+    WEBHOOK_ERROR: str
 
 
-env = Env()  # pyright: ignore[reportCallIssue]
+env = Env()
