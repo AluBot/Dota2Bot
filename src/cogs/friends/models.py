@@ -305,6 +305,7 @@ class LiveMatch:
             ],
             "started_at": self.started_at,
             "average_mmr": self.average_mmr,
+            "unavailable": self.unavailable,
         }
 
 
