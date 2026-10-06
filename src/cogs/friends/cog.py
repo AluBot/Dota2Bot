@@ -12,7 +12,7 @@ from shared import clock
 from shared.concepts import tasks
 
 from . import activities, enums
-from .models import PlayingMatch, RichPresence, SpectatingMatch, Streamer, UnsupportedMatch, LiveMatch
+from .models import LiveMatch, PlayingMatch, RichPresence, SpectatingMatch, Streamer, UnsupportedMatch
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.DEBUG)
@@ -258,7 +258,8 @@ class FriendsCog(commands.Cog[Dota2Bot]):
             INSERT INTO ttv_dota_matches
                 (match_id, start_time, lobby_type, game_mode, outcome, live)
             VALUES ($1, $2, $3, $4, $5, $6)
-            ON CONFLICT (match_id) DO NOTHING;
+            ON CONFLICT (match_id) DO
+                UPDATE SET live = $6;
         """
         await self.bot.pool.execute(
             query,
