@@ -268,13 +268,13 @@ class LiveMatch:
         # ready events
         self.players_data_ready: asyncio.Event = asyncio.Event()
         self.heroes_data_ready: asyncio.Event = asyncio.Event()
-        self.ready: bool = False
 
         # other
         self.streamers: set[Streamer] = set()
         self.started_at: dt.datetime = clock.utcnow()
         self.average_mmr: int | None = None
-        self.unavailable: bool = False
+
+        self.state: enums.MatchState = enums.MatchState.Starting
 
     def _is_players_data_ready(self) -> bool:
         """A condition to check whether match player data is filled properly."""
@@ -288,7 +288,6 @@ class LiveMatch:
         return {
             "tag": self.tag,
             "message": self.message,
-            "ready": self.ready,
             "match_id": self.match_id,
             "lobby_type": self.lobby_type,
             "lobby_type_name": self.lobby_type.display_name if self.lobby_type else "",
@@ -305,7 +304,7 @@ class LiveMatch:
             ],
             "started_at": self.started_at,
             "average_mmr": self.average_mmr,
-            "unavailable": self.unavailable,
+            "state": self.state,
         }
 
 
@@ -327,7 +326,7 @@ class SpectatingMatch(LiveMatch):
             match = await self.bot.web_api.get_real_time_stats(self.server_steam_id)
         except errors.ApiError:
             # If SteamWebAPI didn't respond with any data then we have no way to get the data
-            self.unavailable = True
+            self.state = enums.MatchState.ApiError
             self.update_data.stop()
             return
 
@@ -355,7 +354,7 @@ class SpectatingMatch(LiveMatch):
                 # self.bot.dispatch("heroes_data_ready", self)
 
         if self.players_data_ready.is_set() and self.heroes_data_ready.is_set():
-            self.ready = True
+            self.state = enums.MatchState.Live
             self.update_data.stop()
 
 
@@ -366,7 +365,6 @@ class PlayingMatch(LiveMatch):
         self.lobby_id: int = int(watchable_game_id)
 
         self.average_mmr: int | None = None
-        self.state: enums.PlayingMatchState = enums.PlayingMatchState.Starting
 
         self.update_data.start()
 
@@ -401,14 +399,14 @@ class PlayingMatch(LiveMatch):
                 # self.bot.dispatch("heroes_data_ready", self)
 
         if self.players_data_ready.is_set() and self.heroes_data_ready.is_set():
+            self.state = enums.MatchState.Live
+
             # add to the database
             if self.lobby_type != dota2.LobbyType.Practice:
                 # These lobby types do not leave any trace for match history purposes
                 # I.e. after playing in a practice lobby - there is
                 # no match to inspect in match history, opendota, etc;
                 # And `match.minimal()` errors out with `ValueError`
-
-                self.state = enums.PlayingMatchState.Live
 
                 query = """
                     INSERT INTO ttv_dota_matches
@@ -438,7 +436,6 @@ class PlayingMatch(LiveMatch):
                     """
                     await self.bot.pool.execute(query, streamer.steam.id, self.match_id, hero.id, player_slot)
 
-            self.ready = True
             self.update_data.stop()
 
 

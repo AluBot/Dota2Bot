@@ -149,13 +149,13 @@ class FriendsCog(commands.Cog[Dota2Bot]):
         """
         match: LiveMatch | None = streamer.live_match
         if isinstance(match, PlayingMatch) and match.match_id:
-            if match.state == enums.PlayingMatchState.Live:
-                match.state = enums.PlayingMatchState.Pending
+            if match.state == enums.MatchState.Live:
+                match.state = enums.MatchState.Pending
                 query = "UPDATE ttv_dota_matches SET live = $1 WHERE match_id = $2;"
-                await self.bot.pool.execute(query, enums.PlayingMatchState.Pending, match.match_id)
+                await self.bot.pool.execute(query, enums.MatchState.Pending, match.match_id)
                 if not self.process_pending_matches.is_running():
                     self.process_pending_matches.start()
-            elif match.state == enums.PlayingMatchState.Pending.Starting:
+            elif match.state == enums.MatchState.Starting:
                 # It means that the lobby terminated before heroes were picked;
                 match.update_data.cancel()
 
@@ -174,8 +174,8 @@ class FriendsCog(commands.Cog[Dota2Bot]):
         """
         log.debug("Processing pending matches.")
 
-        query = "SELECT match_id, failed FROM ttv_dota_matches WHERE outcome IS NULL AND live = $1 AND failed < 12;"
-        rows = await self.bot.pool.fetch(query, enums.PlayingMatchState.Pending)
+        query = "SELECT match_id, failed FROM ttv_dota_matches WHERE outcome IS NULL AND live = $1 AND failed < 17;"
+        rows = await self.bot.pool.fetch(query, enums.MatchState.Pending)
         if not rows:
             # I guess no pending matches left
             self.process_pending_matches.cancel()
@@ -196,7 +196,7 @@ class FriendsCog(commands.Cog[Dota2Bot]):
                 continue
 
             query = "UPDATE ttv_dota_matches SET outcome = $1, live = $3 WHERE match_id = $2;"
-            await self.bot.pool.execute(query, minimal.outcome, row["match_id"], enums.PlayingMatchState.Completed)
+            await self.bot.pool.execute(query, minimal.outcome, row["match_id"], enums.MatchState.Completed)
 
     #########################################################################################################################
     # MATCH HISTORY AND MATCHES DATABASE CARE
@@ -268,7 +268,7 @@ class FriendsCog(commands.Cog[Dota2Bot]):
             match.lobby_type,
             match.game_mode,
             minimal.outcome,
-            enums.PlayingMatchState.Completed,
+            enums.MatchState.Completed,
         )
         player_slot = next((slot for slot, player in enumerate(minimal.players) if player.hero == match.hero), None)
         assert player_slot is not None, "Somehow `player_slot` is `None` in match history match"

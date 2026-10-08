@@ -25,10 +25,10 @@ async def minimal(match_id: int, request: Request) -> dict[str, Any]:
     match = await bot.create_partial_match(match_id).minimal()
     return {
         "id": match.id,
-        "radiant_score": match.radiant_score,
-        "dire_score": match.dire_score,
         "lobby_type": match.lobby_type,
         "game_mode": match.game_mode,
+        "radiant_score": match.radiant_score,
+        "dire_score": match.dire_score,
         "outcome": match.outcome,
         "players": [
             {

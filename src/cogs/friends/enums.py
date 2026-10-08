@@ -111,10 +111,11 @@ class LobbyParam0(StrEnum):
     BotMatch = "#DOTA_lobby_type_name_bot_match"
 
 
-class PlayingMatchState(IntEnum):
+class MatchState(IntEnum):
     """Indicates current state for matches."""
 
     Starting = 1
     Live = 2
     Pending = 3
     Completed = 4
+    ApiError = 91
