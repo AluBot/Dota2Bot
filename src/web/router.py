@@ -46,8 +46,8 @@ async def minimal(match_id: int, request: Request) -> dict[str, Any]:
     }
 
 
-@router.get("/convert/{argument:path}", name="path-convertor")
-async def convert(argument: str, request: Request) -> dict[str, Any]:
+@router.get("/steam_id/{argument:path}", name="path-convertor")
+async def steam_id(argument: str, request: Request) -> dict[str, Any]:
     bot: Dota2Bot = cast("Dota2Bot", request.app.bot)
 
     try:
@@ -67,6 +67,27 @@ async def profile_card(friend_id: int, request: Request) -> dict[str, Any]:
 
     profile_card = await bot.create_partial_user(friend_id).dota2_profile_card()
     return {"medal": rank_medal_display_name(profile_card)}
+
+
+@router.get("/previous_match/{friend_id}")
+async def previous_match(friend_id: int, request: Request) -> dict[str, Any]:
+    bot: Dota2Bot = cast("Dota2Bot", request.app.bot)
+    match_history = await bot.create_partial_user(friend_id).match_history()
+
+    match = next(iter(match_history), None)
+    if match is None:
+        return {"error": "It seems I can't see this account's match history yet"}
+    return {
+        "match_id": match.id,
+        "hero_id": match.hero.id,
+        "hero_name": match.hero.name,
+        "win": match.win,
+        "abandon": match.abandon,
+        "game_mode": match.game_mode,
+        "lobby_type": match.lobby_type,
+        "start_time": match.start_time,
+        "duration": match.duration.total_seconds(),
+    }
 
 
 @router.get("/user/{user_id}")
