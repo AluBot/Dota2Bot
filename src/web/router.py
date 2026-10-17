@@ -86,7 +86,7 @@ async def steam_user(friend_id: int, request: Request) -> schemas.SteamUser:
             detail="Invalid ID",
         ) from None
     else:
-        user = await bot.fetch_user(id=id64)
+        user = await bot.fetch_user(id64)
         return {
             "id": user.id,
             "name": user.name,
