@@ -14,8 +14,8 @@ from steam.ext import commands, dota2
 
 from core import Dota2Bot
 from shared import clock, errors
+from shared.apis.local import MatchState
 from shared.concepts import tasks
-from shared.local_api.client import MatchState
 
 if TYPE_CHECKING:
     import datetime
@@ -254,14 +254,8 @@ class RichPresence:
         return hash(self.raw)
 
 
-class Streamer:
-    """Streamer.
-
-    Name note
-    ---------
-    It would make a lot more sense to name this class "Friend", but I'm afraid I might confuse it for steamio's Friend, so
-    I guess "Streamer" is fine.
-    """
+class Friend:
+    """Friend."""
 
     def __init__(self, bot: Dota2Bot, steam: dota2.User) -> None:
         self._bot: Dota2Bot = bot
@@ -433,7 +427,7 @@ class LiveMatch:
         self.heroes_data_ready: asyncio.Event = asyncio.Event()
 
         # other
-        self.streamers: set[Streamer] = set()
+        self.streamers: set[Friend] = set()
         self.started_at: datetime.datetime = clock.utcnow()
         self.average_mmr: int | None = None
 
@@ -455,8 +449,8 @@ class SpectatingMatch(LiveMatch):
         # Steam Web API uses Steam IDs for servers in id64 format, but Rich Presence provides them in id3.
         # Example: id3: [A:1:3513917470:30261] -> id64: 90201966066671646.
         steam_id = steam.ID.from_id3(watching_server)
-        assert steam_id, "Failed to get Steam ID from id3."
-        self.server_steam_id: int = steam_id.id64
+        assert steam_id is not None, "Failed to get Steam ID from id3."
+        self.server_steam_id: int = steam_id.id64  # ty: ignore[invalid-mutable-override]
         self.update_data.start()
 
     @tasks.loop(seconds=10.1, count=30)
@@ -647,9 +641,9 @@ class FriendsCog(commands.Cog[Dota2Bot]):
         log.debug("Indexing bot's friend list.")
         for friend in await self.bot.user.friends():
             # we need to use `friend._user` because `Friend` class doesn't have Dota 2 features which User class have.
-            self.bot.streamers[friend.id] = Streamer(self.bot, friend._user)  # ruff: ignore[private-member-access]  # ty: ignore[invalid-argument-type]
+            self.bot.friends_index[friend.id] = Friend(self.bot, friend._user)  # ruff: ignore[private-member-access]  # ty: ignore[invalid-argument-type]
 
-        for streamer in self.bot.streamers.values():
+        for streamer in self.bot.friends_index.values():
             await self.analyze_rich_presence(streamer)
 
         log.debug('Friends index ready. Setting "_friends_index_ready".')
@@ -664,12 +658,12 @@ class FriendsCog(commands.Cog[Dota2Bot]):
         if rp_before == rp_after:
             return
 
-        streamer = self.bot.streamers.setdefault(after.id, Streamer(self.bot, after))
+        streamer = self.bot.friends_index.setdefault(after.id, Friend(self.bot, after))
         streamer.rich_presence = rp_after
         log.debug("Recognized rich presence update for %r: %r", streamer, streamer.rich_presence)
         await self.analyze_rich_presence(streamer)
 
-    async def analyze_rich_presence(self, streamer: Streamer) -> None:
+    async def analyze_rich_presence(self, streamer: Friend) -> None:
         """Analyze Rich Presence.
 
         Central function for this component.
@@ -724,7 +718,7 @@ class FriendsCog(commands.Cog[Dota2Bot]):
     # PENDING MATCHES
     #########################################################################################################################
 
-    async def conclude_match(self, streamer: Streamer) -> None:
+    async def conclude_match(self, streamer: Friend) -> None:
         """Conclude match as finished.
 
         This nulls `Friend.live_match` attribute as well as adds the match into the database
@@ -785,46 +779,13 @@ class FriendsCog(commands.Cog[Dota2Bot]):
     # MATCH HISTORY AND MATCHES DATABASE CARE
     #########################################################################################################################
 
-    async def update_mmr(
-        self,
-        *,
-        friend_id: int,
-        lobby_type: int,
-        player_slot: int,
-        outcome: dota2.MatchOutcome,
-        is_abandon: bool,
-    ) -> None:
-        """Update MMR for an account under friend_id.
-
-        We only update mmr using match history because it has abandon information.
-        Alternative is using Opendota.
-        Stratz is too slow - they only fill api when the match is fully parsed which can take 10+ minutes.
-        """
-        if lobby_type != dota2.LobbyType.Ranked:
-            return
-        if outcome >= dota2.MatchOutcome.NotScoredPoorNetworkConditions:
-            return
-
-        if is_abandon:
-            mmr_delta = -25
-        elif outcome == dota2.MatchOutcome.RadiantVictory:
-            mmr_delta = 25 if player_slot < 5 else -25
-        elif outcome == dota2.MatchOutcome.DireVictory:
-            mmr_delta = 25 if player_slot > 4 else -25
-        else:
-            mmr_delta = 0
-
-        if mmr_delta:
-            query = "UPDATE ttv_dota_accounts SET estimated_mmr = estimated_mmr + $1 WHERE friend_id = $2;"
-            await self.bot.pool.execute(query, mmr_delta, friend_id)
-
     @tasks.loop(hours=1)
     async def double_check_gc_match_history(self) -> None:
         """Double check match history in case missed some games.
 
         Useful to keep W-L as precise as possible.
         """
-        for streamer in self.bot.streamers.values():
+        for streamer in self.bot.friends_index.values():
             for match in await streamer.steam.match_history():
                 await self.add_match_history_match_to_database(match, streamer.steam.id)
 
@@ -855,15 +816,6 @@ class FriendsCog(commands.Cog[Dota2Bot]):
         )
         player_slot = next((slot for slot, player in enumerate(minimal.players) if player.hero == match.hero), None)
         assert player_slot is not None, "Somehow `player_slot` is `None` in match history match"
-
-        # MMR update only happens there because match history has abandon information while minimal doesn't.
-        await self.update_mmr(
-            friend_id=friend_id,
-            lobby_type=match.lobby_type,
-            player_slot=player_slot,
-            outcome=minimal.outcome,
-            is_abandon=match.abandon,
-        )
 
         query = """
             INSERT INTO ttv_dota_match_players

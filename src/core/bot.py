@@ -18,15 +18,15 @@ from steam import PersonaState
 from steam.ext import dota2
 
 from config import env
+from shared.apis.opendota import OpenDotaClient
+from shared.apis.steam_web import SteamWebAPIClient
+from shared.apis.stratz import StratzClient
 from shared.concepts.base_bot import BotBase
-from shared.dota_apis.opendota import OpenDotaClient
-from shared.dota_apis.steam_web_api import SteamWebAPIClient
-from shared.dota_apis.stratz import StratzClient
 
 if TYPE_CHECKING:
     from aiohttp import ClientSession
 
-    from cogs.friends.models import PlayingMatch, SpectatingMatch, Streamer
+    from cogs.friends import Friend, PlayingMatch, SpectatingMatch
     from shared.concepts import db
 
 log = logging.getLogger(__name__)
@@ -57,17 +57,17 @@ class Dota2Bot(BotBase, dota2.Bot):
             # self.username is used internally by steamio
             self._username: str = env.STEAM_IRENESBOT_USERNAME
             self._password: str = env.STEAM_IRENESBOT_PASSWORD
-            self.error_ping = "<@&1116171071528374394>"
+            ping_role_mention = "<@&1116171071528374394>"
         else:
             self._username: str = env.STEAM_IRENESTEST_USERNAME
             self._password: str = env.STEAM_IRENESTEST_PASSWORD
-            self.error_ping = "<@&1337106675433340990>"
+            ping_role_mention = "<@&1337106675433340990>"
 
         super().__init__(
             self.session,
-            error_webhook=env.WEBHOOK_ERROR,
-            error_ping=self.error_ping,
-            notification_webhook=env.WEBHOOK_NOTIFICATION,
+            ping_role_mention=ping_role_mention,
+            error_webhook_url=env.WEBHOOK_ERROR,
+            notification_webhook_url=env.WEBHOOK_NOTIFICATION,
         )
         super(dota2.Bot, self).__init__(command_prefix="!", state=PersonaState.Online)
 
@@ -76,7 +76,7 @@ class Dota2Bot(BotBase, dota2.Bot):
         self.web_api = SteamWebAPIClient(api_key=env.STEAM_API_KEY, session=session)
 
         # Attributes needed for `cogs.friends`
-        self.streamers: dict[int, Streamer] = {}
+        self.friends_index: dict[int, Friend] = {}  # DO NOT CONFUSE IT WITH steamIO's self.friends
         self.play_matches: dict[str, PlayingMatch] = {}
         self.spectate_matches: dict[str, SpectatingMatch] = {}
 

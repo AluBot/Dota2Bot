@@ -7,7 +7,6 @@ License
 """
 
 import asyncio
-import logging
 import platform
 
 import aiohttp
@@ -19,7 +18,15 @@ from shared.concepts import db, logs
 from web.app import MyFastAPI
 from web.router import router
 
-log = logging.getLogger(__name__)
+# generated at https://patorjk.com/software/taag/ using "Standard" font
+ASCII_STARTING_UP_ART = r"""
+  ____   ___ _____  _    ____  ____   ___ _____   ____ _____  _    ____  ____ _____ ___ _   _  ____
+ |  _ \ / _ \_   _|/ \  |___ \| __ ) / _ \_   _| / ___|_   _|/ \  |  _ \|  _ \_   _|_ _| \ | |/ ___|
+ | | | | | | || | / _ \   __) |  _ \| | | || |   \___ \ | | / _ \ | |_) | |_) || |  | ||  \| | |  _
+ | |_| | |_| || |/ ___ \ / __/| |_) | |_| || |    ___) || |/ ___ \|  _ <|  _ < | |  | || |\  | |_| |
+ |____/ \___/ |_/_/   \_\_____|____/ \___/ |_|   |____/ |_/_/   \_\_| \_\_| \_\|_| |___|_| \_|\____|
+                    [ DOTA2BOT IS STARTING NOW ]
+"""
 
 
 async def start_the_bot() -> None:
@@ -41,13 +48,13 @@ async def start_the_bot() -> None:
 
 def launch() -> None:
     with logs.setup_logging(
-        starting_up_art="xd",
-        filename="d2rpw.log",
+        starting_up_art=ASCII_STARTING_UP_ART,
+        filename="d2b.log",
     ):
         try:
             asyncio.run(start_the_bot())
         except KeyboardInterrupt:
-            log.info("Closing the event loop")
+            print("Aborted! The bot was interrupted with `KeyboardInterrupt`!")  # ruff: ignore[print]
 
 
 if __name__ == "__main__":

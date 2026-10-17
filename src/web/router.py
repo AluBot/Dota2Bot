@@ -6,13 +6,70 @@ import steam
 from fastapi import APIRouter, HTTPException, Request, status
 
 from cogs.friends import rank_display_name
-from shared.types_ import local_api as schemas
+from shared.types_ import local_api as schemas  # ruff: ignore[typing-only-first-party-import]
 
 if TYPE_CHECKING:
     from core import Dota2Bot
 
 
 router = APIRouter()
+
+
+@router.get("/friend/{friend_id}")
+async def friend(friend_id: int, request: Request) -> schemas.Friend:
+    bot: Dota2Bot = cast("Dota2Bot", request.app.bot)
+    if not bot.is_gc_ready():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="I am reconnecting to Dota 2 Game Coordinator, please wait a bit",
+        )
+    if not bot.friends_index:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "I have just recently restarted Dota 2 Game Coordinator, "
+                "I needs some time to gather initial information, please wait a second"
+            ),
+        )
+    friend = bot.friends_index.get(friend_id)
+    if friend is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="I don't have any friends with such friend_id",
+        )
+
+    return {
+        "id": friend.steam.id,
+        "name": friend.steam.name,
+        "is_playing_dota": friend.is_playing_dota(),
+        "status": friend.rich_presence.status.display_name,
+        "rich_presence": str(friend.rich_presence),
+        "raw_rich_presence": friend.rich_presence.raw,
+        "activity": str(friend.activity),
+        "live_match": {
+            "id": friend.live_match.id,
+            "game_mode": friend.live_match.game_mode,
+            "lobby_type": friend.live_match.lobby_type,
+            "tag": friend.live_match.tag,
+            "message": friend.live_match.message,
+            "server_steam_id": friend.live_match.server_steam_id,
+            "players": [
+                {
+                    "id": player.id,
+                    "player_slot": player.player_slot,
+                    "lifetime_games": player.lifetime_games,
+                    "rank_display_name": player.rank_display_name,
+                    "hero_id": player.hero.id,
+                }
+                for player in friend.live_match.players.values()
+            ],
+            "started_at": str(friend.live_match.started_at),
+            "average_mmr": friend.live_match.average_mmr,
+            "state": friend.live_match.state,
+        }
+        if friend.live_match is not None
+        else None,
+    }
 
 
 @router.get("/minimal/{match_id}")
@@ -41,7 +98,7 @@ async def minimal(match_id: int, request: Request) -> schemas.MinimalMatch:
     }
 
 
-@router.get("/previous_match/{friend_id}", response_model=schemas.PreviousMatch)
+@router.get("/previous_match/{friend_id}")
 async def previous_match(friend_id: int, request: Request) -> schemas.PreviousMatch:
     bot: Dota2Bot = cast("Dota2Bot", request.app.bot)
     match_history = await bot.create_partial_user(friend_id).match_history()
@@ -116,61 +173,4 @@ async def steam_user_convert(argument: str, request: Request) -> schemas.SteamUs
     return {
         "id": user.id,
         "name": user.name,
-    }
-
-
-@router.get("/streamer/{friend_id}")
-async def streamer(friend_id: int, request: Request) -> schemas.Streamer:
-    bot: Dota2Bot = cast("Dota2Bot", request.app.bot)
-    if not bot.is_gc_ready():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="I am reconnecting to Dota 2 Game Coordinator, please wait a bit",
-        )
-    if not bot.streamers:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=(
-                "I have just recently restarted Dota 2 Game Coordinator, "
-                "I needs some time to gather initial information, please wait a second"
-            ),
-        )
-    streamer = bot.streamers.get(friend_id)
-    if streamer is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="I don't have any friends with such friend_id",
-        )
-
-    return {
-        "id": streamer.steam.id,
-        "name": streamer.steam.name,
-        "is_playing_dota": streamer.is_playing_dota(),
-        "status": streamer.rich_presence.status.display_name,
-        "rich_presence": str(streamer.rich_presence),
-        "raw_rich_presence": streamer.rich_presence.raw,
-        "activity": str(streamer.activity),
-        "live_match": {
-            "id": streamer.live_match.id,
-            "game_mode": streamer.live_match.game_mode,
-            "lobby_type": streamer.live_match.lobby_type,
-            "tag": streamer.live_match.tag,
-            "message": streamer.live_match.message,
-            "server_steam_id": streamer.live_match.server_steam_id,
-            "players": [
-                {
-                    "id": player.id,
-                    "player_slot": player.player_slot,
-                    "lifetime_games": player.lifetime_games,
-                    "rank_display_name": player.rank_display_name,
-                    "hero_id": player.hero.id,
-                }
-                for player in streamer.live_match.players.values()
-            ],
-            "started_at": str(streamer.live_match.started_at),
-            "average_mmr": streamer.live_match.average_mmr,
-            "state": streamer.live_match.state,
-        }
-        if streamer.live_match is not None
-        else None,
     }
