@@ -63,7 +63,12 @@ class Dota2Bot(BotBase, dota2.Bot):
             self._password: str = env.STEAM_IRENESTEST_PASSWORD
             self.error_ping = "<@&1337106675433340990>"
 
-        super().__init__(self.session, env.WEBHOOK_ERROR, self.error_ping)
+        super().__init__(
+            self.session,
+            error_webhook=env.WEBHOOK_ERROR,
+            error_ping=self.error_ping,
+            notification_webhook=env.WEBHOOK_NOTIFICATION,
+        )
         super(dota2.Bot, self).__init__(command_prefix="!", state=PersonaState.Online)
 
         self.opendota = OpenDotaClient(session=session)

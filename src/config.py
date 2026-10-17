@@ -26,6 +26,8 @@ class Env(EnvConfig):
     STRATZ_BEARER: str
     STEAM_API_KEY: str
     WEBHOOK_ERROR: str
+    WEBHOOK_NOTIFICATION: str
+    WEBHOOK_LOGGER: str
 
 
 env = Env()
