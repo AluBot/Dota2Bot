@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import inspect
 import logging
 import pprint
 from dataclasses import dataclass
@@ -837,8 +838,23 @@ class FriendsCog(commands.Cog[Dota2Bot]):
         #     return
 
         log.debug("Removing way too old matches from the database.")
-        query = "DELETE FROM ttv_dota_matches WHERE start_time < $1;"
-        await self.bot.pool.execute(query, clock.utcnow() - dt.timedelta(hours=48))
+        query = """
+            WITH all_matches AS (SELECT mp.friend_id,
+                                    mp.match_id,
+                                    ROW_NUMBER() OVER (
+                                        PARTITION BY mp.friend_id
+                                        ORDER BY m.start_time DESC, m.match_id DESC
+                                        ) AS rn
+                            FROM ttv_dota_match_players mp
+                                    JOIN ttv_dota_matches m ON m.match_id = mp.match_id),
+                keep AS (SELECT DISTINCT match_id
+                        FROM all_matches
+                        WHERE rn <= 20)
+            DELETE
+            FROM ttv_dota_matches
+            WHERE match_id NOT IN (SELECT match_id FROM keep);
+        """
+        await self.bot.pool.execute(query)
 
         cut_off_dt = clock.utcnow() - dt.timedelta(hours=8)
 
@@ -899,6 +915,37 @@ class FriendsCog(commands.Cog[Dota2Bot]):
                 await asyncio.create_subprocess_shell("sudo systemctl restart dota2bot")
             except Exception:
                 log.exception("Failed to Restart the bot's process", stack_info=True)
+
+    @commands.Cog.listener()  # ty: ignore[invalid-argument-type]
+    async def on_invite(self, invite: steam.Invite) -> None:
+        log.info("Received invite: %r", invite)
+        if not isinstance(invite, steam.UserInvite):
+            # Decline if possible
+            method = getattr(invite, "decline", None)
+            if inspect.iscoroutinefunction(method):
+                await method()
+            return
+
+        sent_dt, _ = self.bot.pending_invites.get(invite.author.id, (None, None))
+        if sent_dt is not None and clock.utcnow() - sent_dt < dt.timedelta(minutes=10):
+            await invite.accept()
+
+    @commands.Cog.listener()  # ty: ignore[invalid-argument-type]
+    async def on_invite_accept(self, invite: steam.Invite) -> None:
+        log.info("Accepted invite: %r", invite)
+
+    @commands.Cog.listener()  # ty: ignore[invalid-argument-type]
+    async def on_invite_decline(self, invite: steam.Invite) -> None:
+        log.info("Declined invite: %r", invite)
+
+    @commands.Cog.listener()  # ty: ignore[invalid-argument-type]
+    async def on_friend_add(self, friend: steam.Friend) -> None:
+        log.info("Added friend %r", friend)
+        query = "INSERT INTO ttv_dota_accounts (friend_id, twitch_id) VALUES ($1, $2) ON CONFLICT (friend_id) DO NOTHING;"
+        _, twitch_id = self.bot.pending_invites.pop(friend.id, (None, None))
+        await self.bot.pool.execute(query, friend.id, twitch_id)
+        self.fill_streamers.restart()
+        self.double_check_gc_match_history.restart()
 
 
 async def setup(bot: Dota2Bot) -> None:

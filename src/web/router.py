@@ -4,8 +4,10 @@ from typing import TYPE_CHECKING, cast
 
 import steam
 from fastapi import APIRouter, HTTPException, Request, status
+from steam.ext.dota2.models import User
 
 from cogs.friends import rank_display_name
+from shared import clock
 from shared.types_ import local_api as schemas  # ruff: ignore[typing-only-first-party-import]
 
 if TYPE_CHECKING:
@@ -102,7 +104,6 @@ async def minimal(match_id: int, request: Request) -> schemas.MinimalMatch:
 async def previous_match(friend_id: int, request: Request) -> schemas.PreviousMatch:
     bot: Dota2Bot = cast("Dota2Bot", request.app.bot)
     match_history = await bot.create_partial_user(friend_id).match_history()
-
     match = next(iter(match_history), None)
     if match is None:
         raise HTTPException(
@@ -150,12 +151,9 @@ async def steam_user(friend_id: int, request: Request) -> schemas.SteamUser:
         }
 
 
-@router.get("/steam_user_convert/{argument:path}", name="path-convertor")
-async def steam_user_convert(argument: str, request: Request) -> schemas.SteamUser:
-    bot: Dota2Bot = cast("Dota2Bot", request.app.bot)
-
+async def convert_argument_to_user(bot: Dota2Bot, argument: str) -> User:
     try:
-        user = await bot.fetch_user(id=steam.utils.parse_id64(argument))
+        return await bot.fetch_user(steam.utils.parse_id64(argument))
     except steam.InvalidID:
         id64 = await steam.utils.id64_from_url(argument)
         if id64 is None:
@@ -163,13 +161,35 @@ async def steam_user_convert(argument: str, request: Request) -> schemas.SteamUs
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Steam User Not Found",
             ) from None
-        user = await bot.fetch_user(id64)
+        return await bot.fetch_user(id64)
     except TimeoutError:
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail="Something is wrong, steam didn't respond",
         ) from None
 
+
+@router.get("/steam_user_convert/{argument:path}", name="path-convertor")
+async def steam_user_convert(argument: str, request: Request) -> schemas.SteamUser:
+    bot: Dota2Bot = cast("Dota2Bot", request.app.bot)
+    user = await convert_argument_to_user(bot, argument)
+    return {
+        "id": user.id,
+        "name": user.name,
+    }
+
+
+@router.get(path="/accept_invite/")
+async def accept_invite(friend_id: int, twitch_id: str, request: Request) -> schemas.SteamUser:
+    bot: Dota2Bot = cast("Dota2Bot", request.app.bot)
+    try:
+        user = await bot.fetch_user(steam.utils.parse_id64(friend_id))
+    except steam.InvalidID:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Steam User Not Found",
+        ) from None
+    bot.pending_invites[user.id] = (clock.utcnow(), twitch_id)
     return {
         "id": user.id,
         "name": user.name,

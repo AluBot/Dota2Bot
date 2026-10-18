@@ -24,6 +24,8 @@ from shared.apis.stratz import StratzClient
 from shared.concepts.base_bot import BotBase
 
 if TYPE_CHECKING:
+    import datetime as dt
+
     from aiohttp import ClientSession
 
     from cogs.friends import Friend, PlayingMatch, SpectatingMatch
@@ -79,6 +81,7 @@ class Dota2Bot(BotBase, dota2.Bot):
         self.friends_index: dict[int, Friend] = {}  # DO NOT CONFUSE IT WITH steamIO's self.friends
         self.play_matches: dict[str, PlayingMatch] = {}
         self.spectate_matches: dict[str, SpectatingMatch] = {}
+        self.pending_invites: dict[int, tuple[dt.datetime, str]] = {}
 
     async def before_login(self) -> None:
         """Before login."""

@@ -2,12 +2,12 @@ import asyncio
 
 import aiohttp
 
-from shared.local_api import client
+from shared.apis import local
 
 
 async def main():
     async with aiohttp.ClientSession() as session:
-        x = client.LocalAPI(session)
+        x = local.LocalAPI(session)
         print(await x.get_previous_match(198649370))
 
 
