@@ -14,7 +14,7 @@ from steam.enums import Enum as SteampyEnum, classproperty
 from steam.ext import commands, dota2
 
 from core import Dota2Bot
-from shared import clock, errors
+from shared import clock
 from shared.apis.local import MatchState
 from shared.concepts import tasks
 
@@ -459,9 +459,9 @@ class SpectatingMatch(LiveMatch):
         log.debug('Updating %s data for watching_server "%s"', self.__class__.__name__, self.watching_server)
         try:
             stats = await self.bot.dota2com.real_time_stats(self.server_steam_id)
-        except errors.ApiError:
+        except Exception:  # ruff: ignore[blind-except]
             # If SteamWebAPI didn't respond with any data then we have no way to get the data
-            self.state = MatchState.ApiError
+            self.state = MatchState.GaveUp
             self.update_data.stop()
             return
 
