@@ -4,13 +4,14 @@ from typing import TYPE_CHECKING, cast
 
 import steam
 from fastapi import APIRouter, HTTPException, Request, status
-from steam.ext.dota2.models import User
 
-from cogs.friends import rank_display_name
+from ext.friends import rank_display_name
 from shared import clock
 from shared.types_ import local_api as schemas  # ruff: ignore[typing-only-first-party-import]
 
 if TYPE_CHECKING:
+    from steam.ext.dota2.models import User
+
     from core import Dota2Bot
 
 

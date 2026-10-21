@@ -458,7 +458,7 @@ class SpectatingMatch(LiveMatch):
     async def update_data(self) -> None:
         log.debug('Updating %s data for watching_server "%s"', self.__class__.__name__, self.watching_server)
         try:
-            stats = await self.bot.web_api.get_real_time_stats(self.server_steam_id)
+            stats = await self.bot.dota2com.real_time_stats(self.server_steam_id)
         except errors.ApiError:
             # If SteamWebAPI didn't respond with any data then we have no way to get the data
             self.state = MatchState.ApiError

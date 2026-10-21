@@ -7,6 +7,7 @@ License
 """
 
 from __future__ import annotations
+from shared.apis.dota2com import Dota2comClient
 
 import logging
 import platform
@@ -28,7 +29,7 @@ if TYPE_CHECKING:
 
     from aiohttp import ClientSession
 
-    from cogs.friends import Friend, PlayingMatch, SpectatingMatch
+    from ext.friends import Friend, PlayingMatch, SpectatingMatch
     from shared.concepts import db
 
 log = logging.getLogger(__name__)
@@ -75,9 +76,10 @@ class Dota2Bot(BotBase, dota2.Bot):
 
         self.opendota = OpenDotaClient(session=session)
         self.stratz = StratzClient(bearer_token=env.STRATZ_BEARER, session=session)
-        self.web_api = SteamWebAPIClient(api_key=env.STEAM_API_KEY, session=session)
+        self.steam_web = SteamWebAPIClient(api_key=env.STEAM_API_KEY, session=session)
+        self.dota2com = Dota2comClient(session=session)
 
-        # Attributes needed for `cogs.friends`
+        # Attributes needed for `ext.friends`
         self.friends_index: dict[int, Friend] = {}  # DO NOT CONFUSE IT WITH steamIO's self.friends
         self.play_matches: dict[str, PlayingMatch] = {}
         self.spectate_matches: dict[str, SpectatingMatch] = {}
@@ -85,9 +87,9 @@ class Dota2Bot(BotBase, dota2.Bot):
 
     async def before_login(self) -> None:
         """Before login."""
-        await self.load_extension("cogs.datafeed")
-        await self.load_extension("cogs.meta")
-        await self.load_extension("cogs.friends")
+        await self.load_extension("ext.datafeed")
+        await self.load_extension("ext.meta")
+        await self.load_extension("ext.friends")
 
     async def _before_login(self) -> None:
         """Start helping services for steam."""
