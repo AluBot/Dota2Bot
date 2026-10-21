@@ -7,18 +7,20 @@ License
 """
 
 from __future__ import annotations
-from shared.apis.dota2com import Dota2comClient
 
 import logging
 import platform
 import sys
 from typing import TYPE_CHECKING, Any, override
 
+import discord
 import steam
 from steam import PersonaState
 from steam.ext import dota2
 
 from config import env
+from shared import fmt
+from shared.apis.dota2com import Dota2comClient
 from shared.apis.opendota import OpenDotaClient
 from shared.apis.steam_web import SteamWebAPIClient
 from shared.apis.stratz import StratzClient
@@ -118,3 +120,23 @@ class Dota2Bot(BotBase, dota2.Bot):
         log.info("🍋 Dota 2 Bot: Ready %s, now waiting till Game Coordinator is ready;", self.user.name)
         await self.wait_until_gc_ready()
         log.info("🍋 Dota 2 Game Coordinator: Ready")
+
+    @override
+    async def on_error(self, event: str, error: Exception, *args: Any, **kwargs: Any) -> None:
+        """Event error: called when an exception is raised in an event listener.
+
+        Parameters
+        ----------
+        event
+            The name of the event that raised the exception.
+        args
+            The positional arguments for the event that raised the exception.
+        kwargs
+            The keyword arguments for the event that raised the exception.
+        """
+        embed = discord.Embed(
+            color=0xA32952,
+            title=f"Event Error: `{event}`",
+            description=f"Event Args:\n{fmt.pformat_args(*args)}\n{fmt.pformat_kwargs(**kwargs)}"[4000:],
+        ).set_footer(text=f"{self.__class__.__name__}.on_error: {event}")
+        await self.error_notification_manager.register(error, embed)
