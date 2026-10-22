@@ -62,15 +62,15 @@ class Dota2Bot(BotBase, dota2.Bot):
             # self.username is used internally by steamio
             self._username: str = env.STEAM_IRENESBOT_USERNAME
             self._password: str = env.STEAM_IRENESBOT_PASSWORD
-            ping_role_mention = "<@&1116171071528374394>"
+            dev_ping = "<@&1116171071528374394>"
         else:
             self._username: str = env.STEAM_IRENESTEST_USERNAME
             self._password: str = env.STEAM_IRENESTEST_PASSWORD
-            ping_role_mention = "<@&1337106675433340990>"
+            dev_ping = "<@&1337106675433340990>"
 
         super().__init__(
             self.session,
-            ping_role_mention=ping_role_mention,
+            dev_ping=dev_ping,
             error_webhook_url=env.WEBHOOK_ERROR,
             notification_webhook_url=env.WEBHOOK_NOTIFICATION,
         )
