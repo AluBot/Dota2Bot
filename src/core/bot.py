@@ -72,7 +72,7 @@ class Dota2Bot(BotBase, dota2.Bot):
             self.session,
             dev_ping=dev_ping,
             error_webhook_url=env.WEBHOOK_ERROR,
-            notification_webhook_url=env.WEBHOOK_NOTIFICATION,
+            spam_webhook_url=env.WEBHOOK_NOTIFICATION,
         )
         super(dota2.Bot, self).__init__(command_prefix="!", state=PersonaState.Online)
 
@@ -137,6 +137,6 @@ class Dota2Bot(BotBase, dota2.Bot):
         embed = discord.Embed(
             color=0xA32952,
             title=f"Event Error: `{event}`",
-            description=f"Event Args:\n{fmt.pformat_args(*args)}\n{fmt.pformat_kwargs(**kwargs)}"[4000:],
+            description=f"Event Args:\n{fmt.pformat_args(*args)}\n{fmt.pformat_mapping(kwargs)}"[4000:],
         ).set_footer(text=f"{self.__class__.__name__}.on_error: {event}")
         await self.error_notification_manager.register(error, embed)

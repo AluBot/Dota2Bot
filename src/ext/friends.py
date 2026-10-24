@@ -31,9 +31,9 @@ log = logging.getLogger(__name__)
 log.setLevel(logging.DEBUG)
 
 
-#############################################################################################################################
+########################################################################################################################
 # UTILITIES
-#############################################################################################################################
+########################################################################################################################
 
 
 def rank_display_name(profile_card: dota2.ProfileCard) -> str:
@@ -46,9 +46,9 @@ def rank_display_name(profile_card: dota2.ProfileCard) -> str:
     return display_name
 
 
-#############################################################################################################################
+########################################################################################################################
 # ACTIVITIES
-#############################################################################################################################
+########################################################################################################################
 
 
 @dataclass(slots=True)
@@ -81,7 +81,8 @@ class Dashboard(Activity):
 
 # Partial Matches
 # Partial matches gets checked with bot's current list of active matches.
-# If there is an active game under the same id - then we don't need to initialize full match twice, we just use the same one
+# If there is an active game under the same id - then we don't need to initialize full match twice,
+# we just use the same one
 # If there is no such game - then we try to get the data.
 # Yes, we need this structure (I think). I've tried simplifying it a few times.
 
@@ -110,9 +111,9 @@ class SpectatingPartialMatch(Activity):
     watching_server: str
 
 
-#############################################################################################################################
+########################################################################################################################
 # ENUMS
-#############################################################################################################################
+########################################################################################################################
 
 
 class SteampyStrEnum(SteampyEnum, str):
@@ -217,9 +218,9 @@ class LobbyParam0(StrEnum):
     BotMatch = "#DOTA_lobby_type_name_bot_match"
 
 
-#############################################################################################################################
+########################################################################################################################
 # MODELS
-#############################################################################################################################
+########################################################################################################################
 
 
 class RichPresence:
@@ -458,7 +459,7 @@ class SpectatingMatch(LiveMatch):
     async def update_data(self) -> None:
         log.debug('Updating %s data for watching_server "%s"', self.__class__.__name__, self.watching_server)
         try:
-            stats = await self.bot.dota2com.real_time_stats(self.server_steam_id)
+            stats = await self.bot.steam_web.get_real_time_stats(self.server_steam_id)
         except Exception:  # ruff: ignore[blind-except]
             # If SteamWebAPI didn't respond with any data then we have no way to get the data
             self.state = MatchState.GaveUp
@@ -555,7 +556,9 @@ class PlayingMatch(LiveMatch):
                     VALUES ($1, $2, $3, $4, $5)
                     ON CONFLICT (match_id) DO NOTHING;
                 """
-                await self.bot.pool.execute(query, self.id, match.start_time, self.lobby_type, self.game_mode, self.state)
+                await self.bot.pool.execute(
+                    query, self.id, match.start_time, self.lobby_type, self.game_mode, self.state
+                )
 
                 for streamer in self.streamers:
                     if streamer.rich_presence.status == Status.Coaching:
@@ -715,9 +718,9 @@ class FriendsCog(commands.Cog[Dota2Bot]):
                 # Do nothing.
                 return
 
-    #########################################################################################################################
+    ####################################################################################################################
     # PENDING MATCHES
-    #########################################################################################################################
+    ####################################################################################################################
 
     async def conclude_match(self, streamer: Friend) -> None:
         """Conclude match as finished.
@@ -761,7 +764,8 @@ class FriendsCog(commands.Cog[Dota2Bot]):
 
         for row in rows:
             try:
-                # If streamer disconnects before ancient falls (e.g., preemptive disconnects or when game is "Safe to leave")
+                # If streamer disconnects before ancient falls (e.g., preemptive disconnects or
+                # when game is "Safe to leave")
                 # Then `.minimal` won't give any results as the game is still live but streamer's RP is different
                 # So we need to deal with errors of not getting response from it.
                 # This also happens if streamer disconnects-reconnects in the middle of the match.
@@ -776,9 +780,9 @@ class FriendsCog(commands.Cog[Dota2Bot]):
             query = "UPDATE ttv_dota_matches SET outcome = $1, live = $3 WHERE match_id = $2;"
             await self.bot.pool.execute(query, minimal.outcome, row["match_id"], MatchState.Completed)
 
-    #########################################################################################################################
+    ####################################################################################################################
     # MATCH HISTORY AND MATCHES DATABASE CARE
-    #########################################################################################################################
+    ####################################################################################################################
 
     @tasks.loop(hours=1)
     async def double_check_gc_match_history(self) -> None:
@@ -867,9 +871,9 @@ class FriendsCog(commands.Cog[Dota2Bot]):
         remove_from_index(self.bot.play_matches)
         remove_from_index(self.bot.spectate_matches)
 
-    #########################################################################################################################
+    ####################################################################################################################
     # TASK CARE
-    #########################################################################################################################
+    ####################################################################################################################
 
     @tasks.loop(count=1)
     async def add_on_user_update_listener(self) -> None:
@@ -941,7 +945,9 @@ class FriendsCog(commands.Cog[Dota2Bot]):
     @commands.Cog.listener()  # ty: ignore[invalid-argument-type]
     async def on_friend_add(self, friend: steam.Friend) -> None:
         log.info("Added friend %r", friend)
-        query = "INSERT INTO ttv_dota_accounts (friend_id, twitch_id) VALUES ($1, $2) ON CONFLICT (friend_id) DO NOTHING;"
+        query = (
+            "INSERT INTO ttv_dota_accounts (friend_id, twitch_id) VALUES ($1, $2) ON CONFLICT (friend_id) DO NOTHING;"
+        )
         _, twitch_id = self.bot.pending_invites.pop(friend.id, (None, None))
         await self.bot.pool.execute(query, friend.id, twitch_id)
         self.fill_streamers.restart()
