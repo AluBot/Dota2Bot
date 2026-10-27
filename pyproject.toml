@@ -83,7 +83,6 @@ ignore = [
     "implicit-namespace-package",
     "magic-value-comparison",
     "no-self-use",
-    "missing-copyright-notice",
     "non-empty-init-module",
     "undefined-local-with-import-star",
     "undefined-local-with-import-star-usage",

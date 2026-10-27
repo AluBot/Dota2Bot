@@ -1,13 +1,14 @@
-"""Dota 2 Client.
+"""Bot.
 
-License
+Notices
 -------
-* License: MPL-2.0, see LICENSE for more details.
-* Copyright: (C) 2020-present @Aluerie.
+* MPL-2.0 License, see LICENSE file for more details.
+* Copyright (C) 2020-present @Aluerie.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import platform
 import sys
@@ -31,7 +32,7 @@ if TYPE_CHECKING:
 
     from aiohttp import ClientSession
 
-    from ext.friends import Friend, PlayingMatch, SpectatingMatch
+    from ext.friends import Friend
     from shared.concepts import db
 
 log = logging.getLogger(__name__)
@@ -70,6 +71,7 @@ class Dota2Bot(BotBase, dota2.Bot):
 
         super().__init__(
             self.session,
+            test=False,
             dev_ping=dev_ping,
             error_webhook_url=env.WEBHOOK_ERROR,
             spam_webhook_url=env.WEBHOOK_NOTIFICATION,
@@ -83,8 +85,7 @@ class Dota2Bot(BotBase, dota2.Bot):
 
         # Attributes needed for `ext.friends`
         self.friends_index: dict[int, Friend] = {}  # DO NOT CONFUSE IT WITH steamIO's self.friends
-        self.play_matches: dict[str, PlayingMatch] = {}
-        self.spectate_matches: dict[str, SpectatingMatch] = {}
+        self.friend_index_ready: asyncio.Event = asyncio.Event()
         self.pending_invites: dict[int, tuple[dt.datetime, str]] = {}
 
     async def before_login(self) -> None:

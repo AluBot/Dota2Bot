@@ -1,3 +1,13 @@
+"""Friends.
+
+follows the bot's Steam friends through Dota 2 Rich Presence and inspects their live matches.
+
+Notices
+-------
+* MPL-2.0 License, see LICENSE file for more details.
+* Copyright (C) 2020-present @Aluerie.
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -5,12 +15,14 @@ import datetime as dt
 import inspect
 import logging
 import pprint
-from dataclasses import dataclass
+import re
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Self, override
+from typing import TYPE_CHECKING, Self, override
 
 import steam
-from steam.enums import Enum as SteampyEnum, classproperty
+from steam.enums import Enum as SteampyEnum
 from steam.ext import commands, dota2
 
 from core import Dota2Bot
@@ -19,21 +31,23 @@ from shared.apis.local import MatchState
 from shared.concepts import tasks
 
 if TYPE_CHECKING:
-    import datetime
+    from collections.abc import Callable
 
     from steam.ext.dota2 import Hero
 
-    from shared.types_ import local_api as schemas
-if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from shared.typings import local_api as schemas
 
 log = logging.getLogger(__name__)
-log.setLevel(logging.DEBUG)
 
-
-########################################################################################################################
-# UTILITIES
-########################################################################################################################
+DOTA_APP_ID = 570
+GC_READY_TIMEOUT = 11 * 60  # seconds the Game Coordinator gets to get ready before the bot is restarted
+POLL_INTERVAL = 10.1  # seconds between attempts to get live match data
+POLL_ATTEMPTS = 30  # attempts before giving up on a live match
+MAX_FAILED_LOOKUPS = 17  # pending matches that failed this many outcome lookups are ignored
+MATCH_HISTORY_MAX_AGE = dt.timedelta(hours=48)
+LIVE_MATCH_MAX_AGE = dt.timedelta(hours=8)
+MATCHES_KEPT_PER_FRIEND = 20
+PARTY_MEMBER_RE = re.compile(r"members\s\{\ssteam_id:\s([0-9]+)")
 
 
 def rank_display_name(profile_card: dota2.ProfileCard) -> str:
@@ -46,32 +60,32 @@ def rank_display_name(profile_card: dota2.ProfileCard) -> str:
     return display_name
 
 
-########################################################################################################################
-# ACTIVITIES
-########################################################################################################################
+# --- ACTIVITIES -------------------------------------------------------------------------------------------------------
 
 
 @dataclass(slots=True)
 class Activity:
     """Activity.
 
-    The purpose of this is to group Steam Rich Presence statuses into some activity categories.
+    Groups Steam Rich Presence statuses into a few categories the bot cares about.
     """
-
-    # @override
-    # def __str__(self) -> str:
-    #     return f"<{self.__class__.__name__}>"
 
 
 @dataclass(slots=True)
 class Incomplete(Activity):
-    """Incomplete activity.
+    """Not enough information yet.
 
-    A special type of activity as the bot only processes information from complete activities.
-    E.g. the bot waits for "Dashboard" instead of figuring out random "Incomplete('Closed Dota')".
+    The bot only reacts to complete activities, e.g. it waits for "Dashboard" instead of reacting to "Closed Dota".
     """
 
     msg: str
+
+
+@dataclass(slots=True)
+class Unrecognized(Activity):
+    """Rich Presence status the bot has never seen. The developers get notified about those."""
+
+    status: str
 
 
 @dataclass(slots=True)
@@ -79,41 +93,28 @@ class Dashboard(Activity):
     """Dashboard."""
 
 
-# Partial Matches
-# Partial matches gets checked with bot's current list of active matches.
-# If there is an active game under the same id - then we don't need to initialize full match twice,
-# we just use the same one
-# If there is no such game - then we try to get the data.
-# Yes, we need this structure (I think). I've tried simplifying it a few times.
-
-
 @dataclass(slots=True)
 class UnsupportedPartialMatch(Activity):
-    """Unsupported Partial Match.
-
-    Not supported, such as bot games.
-    """
+    """Match of a kind the bot can't inspect, such as a bot game."""
 
     msg: str
 
 
 @dataclass(slots=True)
 class PlayingPartialMatch(Activity):
-    """Playing Partial Match."""
+    """Playing a match; the bot still has to find out the rest of its data."""
 
     watchable_game_id: str
 
 
 @dataclass(slots=True)
 class SpectatingPartialMatch(Activity):
-    """Spectating Partial Match."""
+    """Spectating a match; the bot still has to find out the rest of its data."""
 
     watching_server: str
 
 
-########################################################################################################################
-# ENUMS
-########################################################################################################################
+# --- RICH PRESENCE ----------------------------------------------------------------------------------------------------
 
 
 class SteampyStrEnum(SteampyEnum, str):
@@ -165,50 +166,49 @@ class Status(SteampyStrEnum):
     CoopBot = "#DOTA_RP_COOPBOT"  # cSpell: ignore COOPBOT
     WatchingTI = "#DOTA_RP_WATCHING_TI"
 
-    @classproperty
-    def KNOWN_DISPLAY_NAMES(cls: type[Self]) -> Mapping[Status, str]:  # pyright: ignore[reportGeneralTypeIssues] # ruff: ignore[invalid-function-name, invalid-first-argument-name-for-method]
-        """Mapping between RPStatus enum and human-readable display names for them."""
-        return {
-            cls.RichPresenceNone: "Offline/Invisible",
-            cls.NoStatus: "No Status (yet)",
-            cls.Idle: "Main Menu (Idle)",
-            cls.MainMenu: "Main Menu",
-            cls.Finding: "Finding A Match",
-            cls.WaitingToLoad: "Waiting For Players to Load",
-            cls.HeroSelection: "Hero Selection",
-            cls.Strategy: "Strategy Phase",
-            cls.PreGame: "PreGame",
-            cls.Playing: "Playing",
-            cls.Spectating: "Spectating",
-            cls.PrivateLobby: "Private Lobby",
-            cls.BotPractice: "Bot Practice",
-            cls.Coaching: "Coaching",
-            cls.WatchingTournament: "Watching Tournament",
-            cls.CustomGameProgress: "Custom Game",
-            cls.Crownfall: "Crownfall activity",
-            cls.DarkCarnival: "DarkCarnival activity",
-            cls.WatchingTI: "Watching TI",
-        }
-
     @property
     def display_name(self) -> str:
-        """Chat-send friendly display name, if present."""
-        try:
-            return self.KNOWN_DISPLAY_NAMES[self]
-        except KeyError:
-            # will still return "#DEADLOCK_RP_SOMETHING"
-            return self.value
+        """Chat-send friendly display name. Falls back to the raw status value."""
+        return _DISPLAY_NAMES.get(self, self.value)
 
     @override
     @classmethod
     def try_value(cls, value: str) -> Status:
-        # Special cases
-        if value.startswith("#DOTA_Crownfall"):
-            return cls.Crownfall
-        if value.startswith("#DOTA_DarkCarnival"):
-            return cls.DarkCarnival
-        # Normal
+        for status, starts in _STARTSWITH_MAPPING.items():
+            if value.startswith(starts):
+                return status
         return super().try_value(value)
+
+
+_DISPLAY_NAMES: dict[Status, str] = {
+    Status.RichPresenceNone: "Offline/Invisible",
+    Status.NoStatus: "No Status (yet)",
+    Status.Idle: "Main Menu (Idle)",
+    Status.MainMenu: "Main Menu",
+    Status.Finding: "Finding A Match",
+    Status.WaitingForMapToLoad: "Waiting For Map to Load",
+    Status.WaitingToLoad: "Waiting For Players to Load",
+    Status.HeroSelection: "Hero Selection",
+    Status.Strategy: "Strategy Phase",
+    Status.PreGame: "PreGame",
+    Status.Playing: "Playing",
+    Status.Spectating: "Spectating",
+    Status.PrivateLobby: "Private Lobby",
+    Status.BotPractice: "Bot Practice",
+    Status.Coaching: "Coaching",
+    Status.WatchingTournament: "Watching Tournament",
+    Status.CustomGameProgress: "Custom Game",
+    Status.CustomGameLobby: "Custom Game Lobby",
+    Status.CoopBot: "Coop vs Bots",
+    Status.Crownfall: "Crownfall activity",
+    Status.DarkCarnival: "DarkCarnival activity",
+    Status.WatchingTI: "Watching TI",
+}
+
+_STARTSWITH_MAPPING: dict[Status, str] = {
+    Status.Crownfall: "#DOTA_Crownfall",
+    Status.DarkCarnival: "#DOTA_DarkCarnival",
+}
 
 
 class LobbyParam0(StrEnum):
@@ -218,168 +218,158 @@ class LobbyParam0(StrEnum):
     BotMatch = "#DOTA_lobby_type_name_bot_match"
 
 
-########################################################################################################################
-# MODELS
-########################################################################################################################
+# `param1` is usually a hero level, which is pointless for the game-flow logic to know.
+_IGNORED_RICH_PRESENCE_KEYS = frozenset({"param1"})
 
 
+@dataclass(slots=True)
 class RichPresence:
     """Rich Presence.
 
-    Normally Rich Presence is just a dictionary of data.
-    This class adds some utility for GameFlow component to use.
+    Normally Rich Presence is just a dictionary of data. This adds the parsed status and ignores noisy keys,
+    so two instances are equal when nothing meaningful changed.
+
+    Attributes
+    ----------
+    raw
+        Rich Presence data without the ignored keys.
+    status
+        Parsed "status" field. Not used for comparison, as it is derived from `raw`.
     """
 
-    def __init__(self, raw: dict[str, str] | None) -> None:
-        self.raw: dict[str, str] = raw or {}
-        self.status: Status = (
-            Status.try_value(value=self.raw.get("status", "#MY_NO_STATUS")) if self.raw else Status.RichPresenceNone
-        )
+    raw: dict[str, str]
+    status: Status = field(compare=False)
+
+    @classmethod
+    def from_steam(cls, raw: dict[str, str] | None) -> Self:
+        """Create from the raw Rich Presence of a Steam user, which is `None` when they are offline."""
+        data = {k: v for k, v in (raw or {}).items() if k not in _IGNORED_RICH_PRESENCE_KEYS}
+        if not data:
+            return cls(data, Status.RichPresenceNone)
+        return cls(data, Status.try_value(data.get("status", Status.NoStatus.value)))
 
     @override
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__} status={self.status.name}>"
 
-    @override
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, RichPresence):
-            return False
+    @property
+    def party_ids(self) -> list[int]:
+        """Account ids of everyone in the player's party, the player included."""
+        # Valve slices a big party string into `party2`
+        text = self.raw.get("party", "") + self.raw.get("party2", "")
+        return [steam.ID(int(m)).id for m in PARTY_MEMBER_RE.findall(text)]
 
-        # we need to exclude `param1` from comparison because for Dota 2 Rich Presence it's usually a hero level
-        # which is pointless for the game-flow logic to know.
-        # SO.com - Compare dictionaries ignoring specific keys: https://stackoverflow.com/a/70145635/19217368
-        ignore_keys: set[str] = {"param1"}
-        return ignore_keys.issuperset(k for (k, _) in other.raw.items() ^ self.raw.items())
 
-    @override
-    def __hash__(self) -> int:
-        return hash(self.raw)
+_DASHBOARD_STATUSES = frozenset({
+    Status.Idle,
+    Status.MainMenu,
+    Status.Finding,
+})
+_PLAYING_STATUSES = frozenset({
+    Status.WaitingToLoad,
+    Status.HeroSelection,
+    Status.Strategy,
+    Status.PreGame,
+    Status.WaitingForMapToLoad,
+    Status.Playing,
+    Status.Coaching,
+})
+_WATCHING_STATUSES = frozenset({
+    Status.Spectating,
+    Status.WatchingTournament,
+    Status.WatchingTI,
+})
+_UNSUPPORTED_STATUSES: dict[Status, str] = {
+    Status.BotPractice: "Bot matches are not supported",
+    Status.PrivateLobby: "Private lobbies (this includes draft in public lobbies) are not supported",
+    Status.CustomGameProgress: "Custom games are not supported",
+    Status.CustomGameLobby: "Custom games are not supported",
+    Status.Crownfall: "Crownfall activities are not supported",
+    Status.DarkCarnival: "Dark Carnival activities are not supported",
+    Status.CoopBot: "Coop vs Bots matches are not supported",
+}
+
+
+def _classify_playing(rp: RichPresence) -> Activity:
+    match rp.raw.get("WatchableGameID"):
+        case None:
+            # something is off, check whether it's one of the lobbies without a watchable game
+            match rp.raw.get("param0"):
+                case LobbyParam0.DemoMode:
+                    return UnsupportedPartialMatch("Demo mode is not supported")
+                case LobbyParam0.BotMatch:
+                    return UnsupportedPartialMatch("Bot matches are not supported")
+                case _:
+                    return Incomplete("Unknown (Rich Presence is 'playing' but watchable_game_id is None)")
+        case "0":
+            # usually this happens when a player has just quit the match into the main menu,
+            # the status flickers for a few seconds to be `watchable_game_id=0`
+            return Incomplete("Unknown (Rich Presence is 'playing' but watchable_game_id=0)")
+        case watchable_game_id:
+            return PlayingPartialMatch(watchable_game_id)
+
+
+def classify(rp: RichPresence) -> Activity:
+    """Turn Rich Presence into an `Activity`."""
+    status = rp.status
+    if status in _DASHBOARD_STATUSES:
+        return Dashboard()
+    if status in _PLAYING_STATUSES:
+        return _classify_playing(rp)
+    if status in _WATCHING_STATUSES:
+        watching_server = rp.raw.get("watching_server")
+        if watching_server is None:
+            # I think this happens only for watching replays
+            return UnsupportedPartialMatch("Watching replays is not supported")
+        return SpectatingPartialMatch(watching_server)
+    if status == Status.NoStatus:
+        # usually this happens in exact moment when the player closes Dota
+        return Incomplete("Closed Dota")
+    if status == Status.RichPresenceNone:
+        return Incomplete("No Rich Presence yet")
+    if (msg := _UNSUPPORTED_STATUSES.get(status)) is not None:
+        return UnsupportedPartialMatch(msg)
+    return Unrecognized(status.value)
+
+
+# --- FRIENDS AND PLAYERS ----------------------------------------------------------------------------------------------
 
 
 class Friend:
-    """Friend."""
+    """A friend from the bot's Steam friend list."""
 
-    def __init__(self, bot: Dota2Bot, steam: dota2.User) -> None:
-        self._bot: Dota2Bot = bot
-        self.steam: dota2.User = steam
+    def __init__(self, user: dota2.User) -> None:
+        self.steam: dota2.User = user
 
-        # Activity related attributes
-        # later they all gets updated with `on_user_update` steamio event
-        self.rich_presence: RichPresence = RichPresence(steam.rich_presence)
-        self.activity: Activity = Incomplete("The bot has not received any Rich Presence information yet")
+        # these get updated with `on_user_update` steamio event
+        self.rich_presence: RichPresence = RichPresence.from_steam(user.rich_presence)
         self.live_match: LiveMatch | None = None
-
-    def is_playing_dota(self) -> bool:
-        """Whether this friend is playing dota or not."""
-        return bool(app := self.steam.app) and app.id == 570
-
-    async def update_activity(self) -> bool:
-        """Update `self.activity`.
-
-        Return bool indicating whether a new activity was detected.
-        """
-        new_activity = await self.get_activity()
-        if new_activity != self.activity:
-            self.activity = new_activity
-            return True
-        return False
-
-    async def get_activity(self) -> Activity:
-        """Get a new value for `self.activity`."""
-
-        rp = self.rich_presence
-
-        # Dashboard
-        if rp.status in {Status.Idle, Status.MainMenu, Status.Finding}:
-            return Dashboard()
-
-        # Playing
-        if rp.status in {
-            Status.WaitingToLoad,
-            Status.HeroSelection,
-            Status.Strategy,
-            Status.PreGame,
-            Status.WaitingForMapToLoad,
-            Status.Playing,
-            Status.Coaching,
-        }:
-            watchable_game_id = rp.raw.get("WatchableGameID")
-            if watchable_game_id is None:
-                # something is off
-                lobby_param0 = rp.raw.get("param0", "_missing")
-                return {
-                    LobbyParam0.DemoMode: UnsupportedPartialMatch("Demo mode is not supported"),
-                    LobbyParam0.BotMatch: UnsupportedPartialMatch("Bot matches are not supported"),
-                }.get(
-                    lobby_param0,
-                    Incomplete("Unknown (Rich Presence is 'playing' but watchable_game_id is None)"),
-                )
-            if watchable_game_id == "0":
-                # something is off again
-                # usually this happens when a player has just quit the match into the main menu
-                # the status flickers for a few seconds to be `watchable_game_id=0`
-                return Incomplete("Unknown (Rich Presence is 'playing' but watchable_game_id=0)")
-            return PlayingPartialMatch(watchable_game_id)
-
-        # Watching
-        if rp.status in {
-            Status.Spectating,
-            Status.WatchingTournament,
-            Status.WatchingTI,
-        }:
-            watching_server = rp.raw.get("watching_server")
-            if watching_server is None:
-                # something is off, but I think this happens only for watching replays
-                return UnsupportedPartialMatch("Watching replays is not supported")
-            return SpectatingPartialMatch(watching_server)
-
-        # Closed Dota?
-        if rp.status == Status.NoStatus:
-            # usually this happens in exact moment when the player closes Dota
-            return Incomplete("Closed Dota")
-
-        # Other statuses
-        other_statuses = {
-            Status.BotPractice: "Demo mode is not supported",
-            Status.PrivateLobby: "Bot matches are not supported",
-            Status.CustomGameProgress: "Custom games are not supported",
-            Status.CustomGameLobby: "Private lobbies (this includes draft in public lobbies) are not supported",
-            Status.Crownfall: "Crownfall activities are not supported.",
-            Status.DarkCarnival: "Dark Carnival activities are not supported.",
-            Status.CoopBot: "Coop vs Bots matches are not supported",
-        }
-        if (msg := other_statuses.get(rp.status)) is not None:
-            return UnsupportedPartialMatch(msg)
-
-        # Unrecognized
-        # sending warning to @Irene in the discord
-        text = (
-            f"Uncategorized Rich Presence Status \n"
-            f"friend=`{self!r}`\n"
-            f"status=`{rp.status.value}`\n"
-            "rich_presence.raw="
-            f"```json\n{pprint.pformat(rp.raw)}```"
-        )
-        log.warning(text)
-        await self._bot.notify_developers(text)
-
-        return Incomplete("Unknown ('_get_activity' got lost)")
 
     @override
     def __repr__(self) -> str:
         return f'<{self.__class__.__name__} name="{self.steam.name}" id={self.steam.id}>'
 
+    def is_playing_dota(self) -> bool:
+        """Whether this friend is playing dota or not."""
+        return bool(app := self.steam.app) and app.id == DOTA_APP_ID
+
 
 @dataclass
 class Player:
-    """A class representing an active Dota 2 match player.
+    """A player of an active Dota 2 match.
 
-    Notes
-    -----
-    * Compared to my all previous implementations of this - the current iteration for Player class **_DOES NOT_**
-        have any data about selected hero or any logic to assign a hero to the player.
-        I found it's better to keep `.players` and `.heroes` data bound to `Match` classes.
-        The order is carefully taken care of anyway.
+    Attributes
+    ----------
+    id
+        Steam account id.
+    player_slot
+        Position of the player in the match's player order.
+    lifetime_games
+        Amount of games the player has played in total.
+    rank_display_name
+        Human-readable rank medal.
+    hero
+        Selected hero. Not truthy until the hero is picked.
     """
 
     id: int
@@ -392,15 +382,23 @@ class Player:
     def __repr__(self) -> str:
         return f"<Player id={self.id} slot={self.player_slot}>"
 
-    def __bool__(self) -> bool:
-        return bool(self.id)
-
     @classmethod
-    async def create(cls, bot: Dota2Bot, account_id: int, player_slot: int, hero: Hero) -> Player:
-        partial_user = bot.create_partial_user(account_id)
-        profile_card = await partial_user.dota2_profile_card()
+    async def create(cls, bot: Dota2Bot, account_id: int, player_slot: int, hero: Hero) -> Self:
+        """Create a player, fetching their profile card.
 
-        return Player(
+        Parameters
+        ----------
+        bot
+            The bot to make requests with.
+        account_id
+            Steam account id of the player.
+        player_slot
+            Position of the player in the match's player order.
+        hero
+            Hero the player has selected so far.
+        """
+        profile_card = await bot.create_partial_user(account_id).dota2_profile_card()
+        return cls(
             id=account_id,
             player_slot=player_slot,
             lifetime_games=profile_card.lifetime_games,
@@ -409,194 +407,260 @@ class Player:
         )
 
 
+# --- MATCHES ----------------------------------------------------------------------------------------------------------
+
+
 class LiveMatch:
+    """Base class for whatever a friend is currently doing in a match.
+
+    Compared to older implementations, `.players` and `.heroes` data live here and not on the player objects.
+    """
+
     def __init__(self, bot: Dota2Bot, tag: schemas.TagLiteral, message: str = "") -> None:
         self.bot: Dota2Bot = bot
         self.tag: schemas.TagLiteral = tag
         self.message: str = message
 
-        # Common match data
         self.id: int | None = None
         self.lobby_type: dota2.LobbyType | None = None
         self.game_mode: dota2.GameMode | None = None
         self.server_steam_id: int | None = None
-
-        # players
-        self.players: dict[int, Player] = {}
-
-        # ready events
-        self.players_data_ready: asyncio.Event = asyncio.Event()
-        self.heroes_data_ready: asyncio.Event = asyncio.Event()
-
-        # other
-        self.streamers: set[Friend] = set()
-        self.started_at: datetime.datetime = clock.utcnow()
         self.average_mmr: int | None = None
+        self.started_at: dt.datetime = clock.utcnow()
 
+        self.players: dict[int, Player] = {}
+        self.friends: set[Friend] = set()
         self.state: MatchState = MatchState.Starting
 
-    def _is_players_data_ready(self) -> bool:
-        """A condition to check whether match player data is filled properly."""
-        return bool(self.game_mode) and all(bool(player) for player in self.players.values())
+        # set once players and heroes are known
+        self.ready: asyncio.Event = asyncio.Event()
 
-    def _is_heroes_data_ready(self) -> bool:
-        """A condition to check whether match hero data is filled properly."""
-        return bool(self.players) and all(bool(p.hero) for p in self.players.values())
+    @override
+    def __repr__(self) -> str:
+        return f"<{self.__class__.__name__} id={self.id} state={self.state.name}>"
+
+    async def add_friend(self, friend: Friend) -> None:
+        """Register a friend as a participant of this match."""
+        self.friends.add(friend)
 
 
-class SpectatingMatch(LiveMatch):
+class UnsupportedMatch(LiveMatch):
+    """A match the bot can't inspect.
+
+    All chat commands for objects of this type should respond with the message.
+    For example, if a friend is playing Demo Mode, then the bot should only respond with "Demo Mode is not supported",
+    because, well, there is no data in Demo Mode to inspect.
+    """
+
+    def __init__(self, bot: Dota2Bot, message: str) -> None:
+        super().__init__(bot, "unsupported", message)
+
+
+@dataclass(slots=True)
+class MatchSnapshot:
+    """Match data at one moment in time, regardless of where it came from.
+
+    Attributes
+    ----------
+    id
+        Match id.
+    lobby_type
+        Lobby type.
+    game_mode
+        Game mode.
+    started_at
+        When the match has started.
+    players
+        `(account id, hero)` pairs in player slot order.
+    server_steam_id
+        Steam id64 of the game server, if known.
+    average_mmr
+        Average MMR of the match, if known.
+    """
+
+    id: int
+    lobby_type: dota2.LobbyType
+    game_mode: dota2.GameMode
+    started_at: dt.datetime
+    players: list[tuple[int, Hero]]
+    server_steam_id: int | None = None
+    average_mmr: int | None = None
+
+
+class TrackedMatch(LiveMatch, ABC):
+    """A match whose data is polled until the players and their heroes are known.
+
+    Subclasses implement `fetch_snapshot` and call `start` at the end of their `__init__`.
+    """
+
+    def start(self) -> None:
+        """Start polling for the match data."""
+        self._task: asyncio.Task[None] = asyncio.create_task(self._poll())
+
+    def cancel(self) -> None:
+        """Stop polling and mark the match as abandoned by the bot."""
+        self._task.cancel()
+        self.state = MatchState.GaveUp
+
+    @abstractmethod
+    async def fetch_snapshot(self) -> MatchSnapshot:
+        """Fetch the current match data. Raise any exception if it's not available (yet)."""
+
+    async def on_live(self) -> None:
+        """Hook called once, when the match data is complete and right before the match is marked live."""
+
+    def _is_ready(self) -> bool:
+        return bool(self.game_mode) and bool(self.players) and all(bool(p.hero) for p in self.players.values())
+
+    async def _poll(self) -> None:
+        for attempt in range(POLL_ATTEMPTS):
+            if attempt:
+                await asyncio.sleep(POLL_INTERVAL)
+            try:
+                await self._apply(await self.fetch_snapshot())
+            except Exception:
+                log.debug("%r: attempt %d/%d failed", self, attempt + 1, POLL_ATTEMPTS, exc_info=True)
+                continue
+            if self._is_ready():
+                try:
+                    await self.on_live()
+                except Exception:
+                    log.exception("%r: on_live failed", self)
+                self.state = MatchState.Live
+                self.ready.set()
+                log.debug("%r is ready", self)
+                return
+
+        log.warning("%r: gave up getting the match data", self)
+        self.state = MatchState.GaveUp
+
+    async def _apply(self, snapshot: MatchSnapshot) -> None:
+        self.id = snapshot.id
+        self.lobby_type = snapshot.lobby_type
+        self.game_mode = snapshot.game_mode
+        self.started_at = snapshot.started_at
+        self.server_steam_id = snapshot.server_steam_id
+        self.average_mmr = snapshot.average_mmr
+
+        # Heroes get picked over time, so known players only get their hero refreshed.
+        # Only the new players need their profile cards fetched.
+        new_players: dict[int, asyncio.Task[Player]] = {}
+        async with asyncio.TaskGroup() as group:
+            for slot, (account_id, hero) in enumerate(snapshot.players):
+                if (player := self.players.get(account_id)) is not None:
+                    player.hero = hero
+                else:
+                    new_players[account_id] = group.create_task(Player.create(self.bot, account_id, slot, hero))
+        self.players.update({account_id: task.result() for account_id, task in new_players.items()})
+
+
+class SpectatingMatch(TrackedMatch):
+    """A match the friend is spectating. The data comes from the Steam Web API."""
+
     def __init__(self, bot: Dota2Bot, watching_server: str) -> None:
-        super().__init__(bot, tag="spectating")
+        super().__init__(bot, "spectating")
         self.watching_server: str = watching_server
         # Steam Web API uses Steam IDs for servers in id64 format, but Rich Presence provides them in id3.
         # Example: id3: [A:1:3513917470:30261] -> id64: 90201966066671646.
         steam_id = steam.ID.from_id3(watching_server)
         assert steam_id is not None, "Failed to get Steam ID from id3."
-        self.server_steam_id: int = steam_id.id64  # ty: ignore[invalid-mutable-override]
-        self.update_data.start()
+        self.server_steam_id = steam_id.id64
+        self.start()
 
-    @tasks.loop(seconds=10.1, count=30)
-    async def update_data(self) -> None:
-        log.debug('Updating %s data for watching_server "%s"', self.__class__.__name__, self.watching_server)
-        try:
-            stats = await self.bot.steam_web.get_real_time_stats(self.server_steam_id)
-        except Exception:  # ruff: ignore[blind-except]
-            # If SteamWebAPI didn't respond with any data then we have no way to get the data
-            self.state = MatchState.GaveUp
-            self.update_data.stop()
-            return
-
-        if not self.players_data_ready.is_set():
-            self.id = stats.id
-            self.lobby_type = stats.lobby_type
-            self.game_mode = stats.game_mode
-            self.started_at = stats.started_at
-            self.players = {
-                player.id: await Player.create(self.bot, player.id, player_slot, player.hero)
-                for player_slot, player in enumerate(stats.players)
-            }
-            if self._is_players_data_ready():
-                self.players_data_ready.set()
-                log.debug('%s players data ready for: "%s"', self.__class__.__name__, self.watching_server)
-                # self.bot.dispatch("players_data_ready", self)
-            if self._is_heroes_data_ready():
-                log.debug('%s heroes data ready for: "%s"', self.__class__.__name__, self.watching_server)
-                self.heroes_data_ready.set()
-
-        if not self.heroes_data_ready.is_set():
-            for player in stats.players:
-                self.players[player.id].hero = player.hero
-            if self._is_heroes_data_ready():
-                self.heroes_data_ready.set()
-                log.debug('%s heroes data ready for: "%s"', self.__class__.__name__, self.watching_server)
-                # self.bot.dispatch("heroes_data_ready", self)
-
-        if self.players_data_ready.is_set() and self.heroes_data_ready.is_set():
-            self.state = MatchState.Live
-            self.update_data.stop()
+    @override
+    async def fetch_snapshot(self) -> MatchSnapshot:
+        stats = await self.bot.steam_web.get_real_time_stats(self.server_steam_id)
+        return MatchSnapshot(
+            id=stats.id,
+            lobby_type=stats.lobby_type,
+            game_mode=stats.game_mode,
+            started_at=stats.started_at,
+            players=[(player.id, player.hero) for player in stats.players],
+            server_steam_id=self.server_steam_id,
+        )
 
 
-class PlayingMatch(LiveMatch):
+class PlayingMatch(TrackedMatch):
+    """A match the friend is playing. The data comes from the Game Coordinator and gets saved to the database."""
+
     def __init__(self, bot: Dota2Bot, watchable_game_id: str) -> None:
         super().__init__(bot, "playing")
         self.watchable_game_id: str = watchable_game_id
         self.lobby_id: int = int(watchable_game_id)
+        self.start()
 
-        self.average_mmr: int | None = None
+    @property
+    def has_match_history(self) -> bool:
+        """Whether Dota keeps a trace of this match.
 
-        self.update_data.start()
+        Practice lobbies leave none: there is no match to inspect in match history, opendota, etc.,
+        and `.minimal()` errors out with `ValueError` for them.
+        """
+        return self.lobby_type != dota2.LobbyType.Practice
 
-    @tasks.loop(seconds=10.1, count=30)
-    async def update_data(self) -> None:
-        log.debug('Updating %s data for watchable_game_id "%s"', self.__class__.__name__, self.watchable_game_id)
-        match = next(iter(await self.bot.live_matches(lobby_ids=[self.lobby_id])), None)
-        assert match, f'FindTopSourceTVGames did not find watchable_game_id "{self.watchable_game_id}".'
+    @override
+    async def fetch_snapshot(self) -> MatchSnapshot:
+        live = next(iter(await self.bot.live_matches(lobby_ids=[self.lobby_id])), None)
+        if live is None:
+            msg = f'FindTopSourceTVGames did not find watchable_game_id "{self.watchable_game_id}".'
+            raise LookupError(msg)
+        return MatchSnapshot(
+            id=live.id,
+            lobby_type=live.lobby_type,
+            game_mode=live.game_mode,
+            started_at=live.start_time,
+            players=[(player.id, player.hero) for player in live.players],
+            server_steam_id=live.server_steam_id,
+            average_mmr=live.average_mmr,
+        )
 
-        if not self.players_data_ready.is_set():
-            self.server_steam_id = match.server_steam_id
-            self.id = match.id
-            self.average_mmr = match.average_mmr
-            self.lobby_type = match.lobby_type
-            self.game_mode = match.game_mode
-            self.started_at = match.start_time
+    @override
+    async def on_live(self) -> None:
+        if not self.has_match_history:
+            return
+        query = """
+            INSERT INTO ttv_dota_matches
+            (match_id, start_time, lobby_type, game_mode, live)
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (match_id) DO NOTHING;
+        """
+        await self.bot.pool.execute(query, self.id, self.started_at, self.lobby_type, self.game_mode, MatchState.Live)
+        # a friend who joins during these inserts gets picked up by the hourly match history check
+        for friend in list(self.friends):
+            await self._record_friend(friend)
 
-            self.players = {
-                gc_player.id: await Player.create(self.bot, gc_player.id, player_slot, gc_player.hero)
-                for player_slot, gc_player in enumerate(match.players)
-            }
-            if self._is_players_data_ready():
-                self.players_data_ready.set()
-                log.debug('%s players data ready for: "%s"', self.__class__.__name__, self.watchable_game_id)
-                # self.bot.dispatch("players_data_ready", self)
-            if self._is_heroes_data_ready():
-                log.debug('%s heroes data ready for: "%s"', self.__class__.__name__, self.watchable_game_id)
-                self.heroes_data_ready.set()
+    @override
+    async def add_friend(self, friend: Friend) -> None:
+        await super().add_friend(friend)
+        if self.state == MatchState.Live and self.has_match_history:
+            await self._record_friend(friend)
 
-        if not self.heroes_data_ready.is_set():
-            for player in match.players:
-                self.players[player.id].hero = player.hero
-            if self._is_heroes_data_ready():
-                self.heroes_data_ready.set()
-                log.debug('%s heroes data ready for: "%s"', self.__class__.__name__, self.watchable_game_id)
-                # self.bot.dispatch("heroes_data_ready", self)
-
-        if self.players_data_ready.is_set() and self.heroes_data_ready.is_set():
-            self.state = MatchState.Live
-
-            # add to the database
-            if self.lobby_type != dota2.LobbyType.Practice:
-                # These lobby types do not leave any trace for match history purposes
-                # I.e. after playing in a practice lobby - there is
-                # no match to inspect in match history, opendota, etc;
-                # And `match.minimal()` errors out with `ValueError`
-
-                query = """
-                    INSERT INTO ttv_dota_matches
-                    (match_id, start_time, lobby_type, game_mode, live)
-                    VALUES ($1, $2, $3, $4, $5)
-                    ON CONFLICT (match_id) DO NOTHING;
-                """
-                await self.bot.pool.execute(
-                    query, self.id, match.start_time, self.lobby_type, self.game_mode, self.state
-                )
-
-                for streamer in self.streamers:
-                    if streamer.rich_presence.status == Status.Coaching:
-                        # If the person is coaching then the match will not be in their match history -
-                        # we don't need to track WinLoss or etc ; no need to add it into the database ;
-                        continue
-
-                    player_slot = next((s for (s, p) in enumerate(match.players) if p.id == streamer.steam.id), None)
-                    assert player_slot is not None, "Somehow 'player_slot' is 'None' in 'conclude_friend_match'"
-
-                    hero = match.heroes[player_slot]
-                    query = """
-                        INSERT INTO ttv_dota_match_players
-                        (friend_id, match_id, hero_id, player_slot)
-                        VALUES ($1, $2, $3, $4)
-                        ON CONFLICT (friend_id, match_id) DO NOTHING;
-                    """
-                    await self.bot.pool.execute(query, streamer.steam.id, self.id, hero.id, player_slot)
-
-            self.update_data.stop()
+    async def _record_friend(self, friend: Friend) -> None:
+        if friend.rich_presence.status == Status.Coaching:
+            # The match will not be in a coach's match history, so there is no W/L to track.
+            return
+        player = self.players.get(friend.steam.id)
+        if player is None:
+            log.warning("%r: friend %r is not among the match players", self, friend)
+            return
+        query = """
+            INSERT INTO ttv_dota_match_players
+            (friend_id, match_id, hero_id, player_slot)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (friend_id, match_id) DO NOTHING;
+        """
+        await self.bot.pool.execute(query, friend.steam.id, self.id, player.hero.id, player.player_slot)
 
 
-class UnsupportedMatch(LiveMatch):
-    """A class describing unsupported matches.
-
-    All chat commands for objects of this type should return unsupported message response.
-    For example, if streamer is playing Demo Mode, then the bot should only respond with "Demo Mode is not supported",
-    because, well, there is no data in Demo Mode to insect.
-    """
-
-    def __init__(self, bot: Dota2Bot, message: str = "") -> None:
-        super().__init__(bot, tag="unsupported")
-        self.message = message
+def _get_or_create[T: LiveMatch](index: dict[str, T], key: str, factory: Callable[[], T]) -> T:
+    """Get a match from the index, or create it. Matches the bot gave up on don't get reused."""
+    live = index.get(key)
+    if live is None or live.state == MatchState.GaveUp:
+        live = index[key] = factory()
+    return live
 
 
-#############################################################################################################################
-# COG
-#############################################################################################################################
+# --- COG --------------------------------------------------------------------------------------------------------------
 
 
 class FriendsCog(commands.Cog[Dota2Bot]):
@@ -610,68 +674,85 @@ class FriendsCog(commands.Cog[Dota2Bot]):
     Notes
     -----
     * The restrictions of such approach are
-            1. Streamers have to add the bot into their friend list;
-            2. Streamers have to play Dota 2 while being green-online in steam;
-        The other solution that would solve these problems would be using Dota 2 Game State Integration (GSI),
-        which I'm going to implement one day.
+        1. people have to add the bot into their friend list;
+        2. people have to play Dota 2 while being green-online in steam.
+
+      The other solution that would solve these problems would be using Dota 2 Game State Integration (GSI),
+      which I'm going to implement one day.
     """
 
     def __init__(self) -> None:
         super().__init__()
+        self.play_matches: dict[str, PlayingMatch] = {}  # watchable game id -> match
+        self.spectate_matches: dict[str, SpectatingMatch] = {}  # watching server -> match
 
-        self.streamer_index_ready: asyncio.Event = asyncio.Event()
+        self._reported_statuses: set[str] = set()
 
-        self.fill_streamers.start()
-        self.add_on_user_update_listener.start()
+        self.fill_friends.start()
         self.double_check_gc_match_history.start()
         self.remove_way_too_old_matches.start()
-        self.tuesday_problem.start()
 
     @override
     async def cog_unload(self) -> None:
-        """Cog Unload."""
-        self.fill_streamers.cancel()
-        self.add_on_user_update_listener.cancel()
-        self.double_check_gc_match_history.cancel()
-        self.remove_way_too_old_matches.cancel()
-        self.tuesday_problem.cancel()
+        for loop in (
+            self.fill_friends,
+            self.double_check_gc_match_history,
+            self.remove_way_too_old_matches,
+            self.process_pending_matches,
+        ):
+            loop.cancel()
+        for index in (self.play_matches, self.spectate_matches):
+            for live in index.values():
+                if live.state == MatchState.Starting:
+                    live.cancel()
+
+    # --- rich presence ---
+
+    def _index_friend(self, steam_friend: steam.Friend) -> Friend:
+        """Add a friend of the bot into the index, unless they are there already."""
+        friend = self.bot.friends_index.get(steam_friend.id)
+        if friend is None:
+            # we need `friend._user` because `Friend` class doesn't have Dota 2 features which User class have.
+            friend = self.bot.friends_index[steam_friend.id] = Friend(steam_friend._user)  # ruff: ignore[private-member-access]  # ty: ignore[invalid-argument-type]
+        return friend
 
     @tasks.loop(count=1)
-    async def fill_streamers(self) -> None:
-        """Index bot's friend list on bot's startup.
-
-        Also makes initial analyse of their rich presences.
-        """
+    async def fill_friends(self) -> None:
+        """Index bot's friend list and analyze their rich presences."""
         log.debug("Indexing bot's friend list.")
-        for friend in await self.bot.user.friends():
-            # we need to use `friend._user` because `Friend` class doesn't have Dota 2 features which User class have.
-            self.bot.friends_index[friend.id] = Friend(self.bot, friend._user)  # ruff: ignore[private-member-access]  # ty: ignore[invalid-argument-type]
+        for steam_friend in await self.bot.user.friends():
+            self._index_friend(steam_friend)
 
-        for streamer in self.bot.friends_index.values():
-            await self.analyze_rich_presence(streamer)
+        # From now on `on_user_update` handles changes, so none get lost while the initial analysis is running.
+        self.bot.friend_index_ready.set()
+        log.debug("Friends index ready.")
 
-        log.debug('Friends index ready. Setting "_friends_index_ready".')
-        self.streamer_index_ready.set()
+        for friend in list(self.bot.friends_index.values()):
+            await self.analyze_rich_presence(friend)
+        self._start_pending_matches_loop()  # picks up matches left pending by the previous run
 
     @commands.Cog.listener()  # ty: ignore[invalid-argument-type]
-    async def on_user_update(self, before: dota2.User, after: dota2.User) -> None:
+    async def on_user_update(self, _: dota2.User, after: dota2.User) -> None:
         """Event when a steam user is updated, due to one or more of their attributes changing."""
-        rp_before = RichPresence(raw=before.rich_presence)
-        rp_after = RichPresence(raw=after.rich_presence)
+        if not self.bot.friend_index_ready.is_set():
+            return  # `fill_friends` is going to analyze everyone once it's done
 
-        if rp_before == rp_after:
+        rich_presence = RichPresence.from_steam(after.rich_presence)
+        friend = self.bot.friends_index.get(after.id)
+        if friend is None:
+            friend = self.bot.friends_index[after.id] = Friend(after)
+        elif friend.rich_presence == rich_presence:
             return
 
-        streamer = self.bot.friends_index.setdefault(after.id, Friend(self.bot, after))
-        streamer.rich_presence = rp_after
-        log.debug("Recognized rich presence update for %r: %r", streamer, streamer.rich_presence)
-        await self.analyze_rich_presence(streamer)
+        friend.rich_presence = rich_presence
+        log.debug("Recognized rich presence update for %r: %r", friend, rich_presence)
+        await self.analyze_rich_presence(friend)
 
-    async def analyze_rich_presence(self, streamer: Friend) -> None:
+    async def analyze_rich_presence(self, friend: Friend) -> None:
         """Analyze Rich Presence.
 
         Central function for this component.
-        The bot tracks streamers's game-flow via inspecting their rich presence.
+        The bot tracks friends' game-flow via inspecting their rich presence.
         If the bot detects a new game being played or watched - it will do necessary actions to
         prepare those matches for further inspection.
 
@@ -679,129 +760,172 @@ class FriendsCog(commands.Cog[Dota2Bot]):
         -------
         The code in this function is also quite volatile. Valve are quite inconsistent in their Rich Presence data,
         so the logic might break any day.
+
+        Parameters
+        ----------
+        friend
+            The friend whose Rich Presence has changed.
         """
-        if streamer.is_playing_dota():
-            # Update `last_seen` in the database;
-            query = "UPDATE ttv_dota_accounts SET last_seen = $1 WHERE friend_id = $2;"
-            await self.bot.pool.execute(query, clock.utcnow(), streamer.steam.id)
-        else:
-            # not interested if not playing Dota 2
-            streamer.activity = Incomplete("Not Green In Dota")
-            await self.conclude_match(streamer)
+        if not friend.is_playing_dota():
+            await self.conclude_match(friend)
             return
 
-        if not await streamer.update_activity():
-            # No new activity was detected
-            return
+        query = "UPDATE ttv_dota_accounts SET last_seen = $1 WHERE friend_id = $2;"
+        await self.bot.pool.execute(query, clock.utcnow(), friend.steam.id)
 
-        match streamer.activity:
+        match classify(friend.rich_presence):
             case Dashboard():
-                await self.conclude_match(streamer)
-
-            case PlayingPartialMatch():
-                watchable_game_id = streamer.activity.watchable_game_id
-                if watchable_game_id not in self.bot.play_matches:
-                    self.bot.play_matches[watchable_game_id] = PlayingMatch(self.bot, watchable_game_id)
-                streamer.live_match = self.bot.play_matches[watchable_game_id]
-
-            case SpectatingPartialMatch():
-                watching_server = streamer.activity.watching_server
-                if watching_server not in self.bot.spectate_matches:
-                    self.bot.spectate_matches[watching_server] = SpectatingMatch(self.bot, watching_server)
-                streamer.live_match = self.bot.spectate_matches[watching_server]
-
-            case UnsupportedPartialMatch():
-                streamer.live_match = UnsupportedMatch(self.bot, message=streamer.activity.msg)
-
+                await self.conclude_match(friend)
+            case PlayingPartialMatch(watchable_game_id=game_id):
+                live = _get_or_create(self.play_matches, game_id, lambda: PlayingMatch(self.bot, game_id))
+                await self._attach(friend, live)
+            case SpectatingPartialMatch(watching_server=server):
+                live = _get_or_create(self.spectate_matches, server, lambda: SpectatingMatch(self.bot, server))
+                await self._attach(friend, live)
+            case UnsupportedPartialMatch(msg=msg):
+                current = friend.live_match
+                if not (isinstance(current, UnsupportedMatch) and current.message == msg):
+                    await self._attach(friend, UnsupportedMatch(self.bot, msg))
+            case Unrecognized(status=status):
+                await self._report_unrecognized(friend, status)
             case _:
                 # Incomplete activities - wait for confirmed activities.
-                # Do nothing.
-                return
+                pass
 
-    ####################################################################################################################
-    # PENDING MATCHES
-    ####################################################################################################################
+    async def _attach(self, friend: Friend, live: LiveMatch) -> None:
+        if friend.live_match is not live:
+            await self.conclude_match(friend)
+        friend.live_match = live
+        await live.add_friend(friend)
 
-    async def conclude_match(self, streamer: Friend) -> None:
-        """Conclude match as finished.
+    async def _report_unrecognized(self, friend: Friend, status: str) -> None:
+        if status in self._reported_statuses:
+            return
+        self._reported_statuses.add(status)
+        rich_presence = friend.rich_presence
+        text = (
+            "Uncategorized Rich Presence Status\n"
+            f"friend=`{friend!r}`\n"
+            f"status=`{rich_presence.status.value}`\n"
+            f"rich_presence.raw=```json\n{pprint.pformat(rich_presence.raw)}```"
+        )
+        log.warning(text)
+        await self.bot.notify_developers(text)
 
-        This nulls `Friend.live_match` attribute as well as adds the match into the database
-        if it's a `PlayingMatch`.
+    # --- pending matches ---
+
+    async def conclude_match(self, friend: Friend) -> None:
+        """Detach the friend from their match, and conclude the match if they were the last one in it.
+
+        A live match becomes pending, meaning that the bot is waiting for its outcome.
+        A match that never got its data gets abandoned.
+
+        Parameters
+        ----------
+        friend
+            The friend who has left the match.
         """
-        match: LiveMatch | None = streamer.live_match
-        if isinstance(match, PlayingMatch) and bool(match.id):
-            if match.state == MatchState.Live:
-                match.state = MatchState.Pending
-                query = "UPDATE ttv_dota_matches SET live = $1 WHERE match_id = $2;"
-                await self.bot.pool.execute(query, MatchState.Pending, match.id)
-                if not self.process_pending_matches.is_running():
-                    self.process_pending_matches.start()
-            elif match.state == MatchState.Starting:
-                # It means that the lobby terminated before heroes were picked;
-                match.update_data.cancel()
+        live = friend.live_match
+        friend.live_match = None
+        if live is None:
+            return
+        live.friends.discard(friend)
+        if live.friends:
+            return
 
-        streamer.live_match = None
+        if isinstance(live, TrackedMatch) and live.state == MatchState.Starting:
+            # The lobby terminated before heroes were picked.
+            live.cancel()
+        elif isinstance(live, PlayingMatch) and live.state == MatchState.Live:
+            live.state = MatchState.Pending
+            query = "UPDATE ttv_dota_matches SET live = $1 WHERE match_id = $2;"
+            await self.bot.pool.execute(query, MatchState.Pending, live.id)
+            self._start_pending_matches_loop()
+
+    def _start_pending_matches_loop(self) -> None:
+        if not self.process_pending_matches.is_running():
+            self.process_pending_matches.start()
 
     @tasks.loop(seconds=20)
     async def process_pending_matches(self) -> None:
-        """Process pending matches.
+        """Find out the outcome of pending matches. Stops itself when there are none left.
 
-        Development Notes
-        -----------------
+        Notes
+        -----
         * We use match history endpoint specifically because it has `.abandon` attribute.
-            So if we remove that quirk - we can probably be fine with just "minimal_match" data.
+          So if we remove that quirk - we can probably be fine with just "minimal_match" data.
         * Another option is to use opendota api (stratz is too slow -
-            they don't allow access to data until full parse is done)
+          they don't allow access to data until full parse is done)
         """
-        log.debug("Processing pending matches.")
-
-        query = "SELECT match_id, failed FROM ttv_dota_matches WHERE outcome IS NULL AND live = $1 AND failed < 17;"
-        rows = await self.bot.pool.fetch(query, MatchState.Pending)
+        query = "SELECT match_id FROM ttv_dota_matches WHERE outcome IS NULL AND live = $1 AND failed < $2;"
+        rows = await self.bot.pool.fetch(query, MatchState.Pending, MAX_FAILED_LOOKUPS)
         if not rows:
-            # I guess no pending matches left
-            self.process_pending_matches.cancel()
+            self.process_pending_matches.stop()
             return
 
         for row in rows:
+            match_id = row["match_id"]
             try:
-                # If streamer disconnects before ancient falls (e.g., preemptive disconnects or
-                # when game is "Safe to leave")
-                # Then `.minimal` won't give any results as the game is still live but streamer's RP is different
-                # So we need to deal with errors of not getting response from it.
-                # This also happens if streamer disconnects-reconnects in the middle of the match.
-                minimal = await self.bot.create_partial_match(row["match_id"]).minimal()
+                # If friend disconnects before ancient falls (e.g., preemptive disconnects or
+                # when game is "Safe to leave") then `.minimal` won't give any results as the game
+                # is still live but friend's RP is different. This also happens if friend
+                # disconnects-reconnects in the middle of the match.
+                minimal = await self.bot.create_partial_match(match_id).minimal()
             except ValueError:
-                # this way any matches that errored out more 12 times gonna be ignored
-                # not sure how I feel about such solution;
+                # matches that failed too many times get ignored by the query above
                 query = "UPDATE ttv_dota_matches SET failed = failed + 1 WHERE match_id = $1;"
-                await self.bot.pool.execute(query, row["match_id"])
+                await self.bot.pool.execute(query, match_id)
                 continue
 
             query = "UPDATE ttv_dota_matches SET outcome = $1, live = $3 WHERE match_id = $2;"
-            await self.bot.pool.execute(query, minimal.outcome, row["match_id"], MatchState.Completed)
+            await self.bot.pool.execute(query, minimal.outcome, match_id, MatchState.Completed)
 
-    ####################################################################################################################
-    # MATCH HISTORY AND MATCHES DATABASE CARE
-    ####################################################################################################################
+    # --- match history and database care ---
 
     @tasks.loop(hours=1)
     async def double_check_gc_match_history(self) -> None:
         """Double check match history in case missed some games.
 
-        Useful to keep W-L as precise as possible.
+        Useful to keep W-L as precise as possible. Also the only source of the `abandon` flag.
         """
-        for streamer in self.bot.friends_index.values():
-            for match in await streamer.steam.match_history():
-                await self.add_match_history_match_to_database(match, streamer.steam.id)
+        for friend in list(self.bot.friends_index.values()):
+            await self._sync_history(friend)
 
-    async def add_match_history_match_to_database(self, match: dota2.MatchHistoryMatch, friend_id: int) -> None:
-        """Add matches from match history check loop into the database."""
-        if match.start_time < clock.utcnow() - dt.timedelta(hours=48):
-            # Match is way too old to care
+    async def _sync_history(self, friend: Friend) -> None:
+        """Add recent matches from the friend's match history into the database."""
+        try:
+            history = await friend.steam.match_history()
+        except Exception:
+            log.exception("Failed to get match history of %r", friend)
+            return
+        for entry in history:
+            try:
+                await self._store_history_match(entry, friend.steam.id)
+            except Exception:
+                log.exception("Failed to store match %s of %r", entry.id, friend)
+
+    async def _store_history_match(self, entry: dota2.MatchHistoryMatch, friend_id: int) -> None:
+        if entry.start_time < clock.utcnow() - MATCH_HISTORY_MAX_AGE:
+            return
+
+        # Fast path: a match we already know as completed only needs its `abandon` flag refreshed,
+        # which comes from the match history entry. No need to ask for `.minimal()` again.
+        query = """
+            UPDATE ttv_dota_match_players mp
+            SET abandon = $3
+            FROM ttv_dota_matches m
+            WHERE m.match_id = mp.match_id AND mp.friend_id = $1 AND mp.match_id = $2 AND m.live = $4;
+        """
+        status = await self.bot.pool.execute(query, friend_id, entry.id, entry.abandon, MatchState.Completed)
+        if status == "UPDATE 1":
             return
 
         # match history entities on their own do not give proper outcome (Radiant/Dire)
-        minimal = await self.bot.create_partial_match(match.id).minimal()
+        minimal = await self.bot.create_partial_match(entry.id).minimal()
+        player_slot = next((slot for slot, player in enumerate(minimal.players) if player.hero == entry.hero), None)
+        if player_slot is None:
+            msg = f"Hero of match history match {entry.id} is not among the match players."
+            raise LookupError(msg)
 
         query = """
             INSERT INTO ttv_dota_matches
@@ -812,16 +936,13 @@ class FriendsCog(commands.Cog[Dota2Bot]):
         """
         await self.bot.pool.execute(
             query,
-            match.id,
-            match.start_time,
-            match.lobby_type,
-            match.game_mode,
+            entry.id,
+            entry.start_time,
+            entry.lobby_type,
+            entry.game_mode,
             minimal.outcome,
             MatchState.Completed,
         )
-        player_slot = next((slot for slot, player in enumerate(minimal.players) if player.hero == match.hero), None)
-        assert player_slot is not None, "Somehow `player_slot` is `None` in match history match"
-
         query = """
             INSERT INTO ttv_dota_match_players
             (friend_id, match_id, hero_id, player_slot, abandon)
@@ -829,102 +950,74 @@ class FriendsCog(commands.Cog[Dota2Bot]):
             ON CONFLICT (friend_id, match_id) DO
                 UPDATE SET abandon = $5;
         """
-        await self.bot.pool.execute(query, friend_id, match.id, match.hero.id, player_slot, match.abandon)
+        await self.bot.pool.execute(query, friend_id, entry.id, entry.hero.id, player_slot, entry.abandon)
 
     @tasks.loop(hours=6)
     async def remove_way_too_old_matches(self) -> None:
-        """Clean the database from way too old matches.
+        """Clean up old matches from the database and from the bot's memory.
 
-        Currently, 48 hours is considered as "too old".
+        Only the latest matches of each friend are kept in the database; matches that are still live or pending
+        are never removed. Matches that started more than 8 hours ago are forgotten by the in-memory indexes.
         """
-        # if self.remove_way_too_old_matches.current_loop == 0:
-        #     # No need to bother on bot reloads.
-        #     return
-
-        log.debug("Removing way too old matches from the database.")
+        log.debug("Removing way too old matches.")
         query = """
-            WITH all_matches AS (SELECT mp.friend_id,
-                                    mp.match_id,
-                                    ROW_NUMBER() OVER (
-                                        PARTITION BY mp.friend_id
-                                        ORDER BY m.start_time DESC, m.match_id DESC
-                                        ) AS rn
-                            FROM ttv_dota_match_players mp
-                                    JOIN ttv_dota_matches m ON m.match_id = mp.match_id),
-                keep AS (SELECT DISTINCT match_id
-                        FROM all_matches
-                        WHERE rn <= 20)
-            DELETE
-            FROM ttv_dota_matches
-            WHERE match_id NOT IN (SELECT match_id FROM keep);
+            WITH ranked AS (
+                SELECT mp.match_id,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY mp.friend_id
+                           ORDER BY m.start_time DESC, m.match_id DESC
+                       ) AS rn
+                FROM ttv_dota_match_players mp
+                JOIN ttv_dota_matches m ON m.match_id = mp.match_id
+            )
+            DELETE FROM ttv_dota_matches
+            WHERE live = $1
+              AND match_id NOT IN (SELECT match_id FROM ranked WHERE rn <= $2);
         """
-        await self.bot.pool.execute(query)
+        await self.bot.pool.execute(query, MatchState.Completed, MATCHES_KEPT_PER_FRIEND)
 
-        cut_off_dt = clock.utcnow() - dt.timedelta(hours=8)
+        cut_off = clock.utcnow() - LIVE_MATCH_MAX_AGE
+        for index in (self.play_matches, self.spectate_matches):
+            for key in [key for key, live in index.items() if live.started_at < cut_off]:
+                del index[key]
 
-        def remove_from_index(index: dict[str, Any]) -> None:
-            for match_id in list(index.keys()):
-                match = index[match_id]
-                if match.started_at < cut_off_dt:
-                    index.pop(match_id)
+    # --- task care ---
 
-        remove_from_index(self.bot.play_matches)
-        remove_from_index(self.bot.spectate_matches)
-
-    ####################################################################################################################
-    # TASK CARE
-    ####################################################################################################################
-
-    @tasks.loop(count=1)
-    async def add_on_user_update_listener(self) -> None:
-        """Add `on_user_update` listener after all the clients are ready."""
-        self.bot.add_listener(self.on_user_update, name="on_user_update")
-
-    @add_on_user_update_listener.before_loop
-    @fill_streamers.before_loop
+    @fill_friends.before_loop
     async def wait_for_clients(self) -> None:
         """Wait for all the needed clients to get ready.
 
         Otherwise, such things as Dota 2 Coordinator requests are going to error out.
         Unfortunately, specifically, Dota 2 Coordinator usually takes ~30 seconds to get ready.
+
+        Also a crutch for the infamous Tuesday Steam maintenance problems: when steam crashes the bot never
+        properly reconnects or restarts on its own, so if the Coordinator is not ready in time - restart the bot.
         """
         await self.bot.wait_until_ready()
-        await self.bot.wait_until_gc_ready()
-
-    @double_check_gc_match_history.before_loop
-    @remove_way_too_old_matches.before_loop
-    async def wait_for_streamer_index(self) -> None:
-        """Extra waiting for streamer index to get filled with initial data.
-
-        This calls `.wait_for_clients` which also waits for all the required clients to be ready.
-        """
-        await self.wait_for_clients()
-        await self.streamer_index_ready.wait()
-
-    @tasks.loop(count=1)
-    async def tuesday_problem(self) -> None:
-        """Crutch to try to solve infamous Tuesday Steam maintenance problems.
-
-        When steam crashes - it is always a big problem for the bot;
-        It doesn't ever properly reconnect or restart on its own.
-
-        Let's put a crutch to simply restart the bot if that happens.
-        """
         try:
-            async with asyncio.timeout(11 * 60):  # 11 minutes
+            async with asyncio.timeout(GC_READY_TIMEOUT):
                 await self.bot.wait_until_gc_ready()
         except TimeoutError:
             log.critical("🔴 Failed to wait for Dota 2 Game Coordinator to get ready - restarting the bot. 🔴")
             try:
-                await asyncio.create_subprocess_shell("sudo systemctl restart dota2bot")
-            except Exception:
-                log.exception("Failed to Restart the bot's process", stack_info=True)
+                await asyncio.create_subprocess_exec("sudo", "systemctl", "restart", "dota2bot")
+            except OSError:
+                log.exception("Failed to restart the bot's process")
+            await self.bot.wait_until_gc_ready()
+
+    @double_check_gc_match_history.before_loop
+    @remove_way_too_old_matches.before_loop
+    async def wait_for_friend_index(self) -> None:
+        """Wait for `fill_friends`, which itself waits for all the clients, to fill the friend index."""
+        await self.bot.friend_index_ready.wait()
+
+    # --- invites and friends ---
 
     @commands.Cog.listener()  # ty: ignore[invalid-argument-type]
     async def on_invite(self, invite: steam.Invite) -> None:
+        """Accept user invites that the bot has asked for within the last 10 minutes, decline everything else."""
         log.info("Received invite: %r", invite)
         if not isinstance(invite, steam.UserInvite):
-            # Decline if possible
             method = getattr(invite, "decline", None)
             if inspect.iscoroutinefunction(method):
                 await method()
@@ -936,22 +1029,28 @@ class FriendsCog(commands.Cog[Dota2Bot]):
 
     @commands.Cog.listener()  # ty: ignore[invalid-argument-type]
     async def on_invite_accept(self, invite: steam.Invite) -> None:
+        """Log accepted invites."""
         log.info("Accepted invite: %r", invite)
 
     @commands.Cog.listener()  # ty: ignore[invalid-argument-type]
     async def on_invite_decline(self, invite: steam.Invite) -> None:
+        """Log declined invites."""
         log.info("Declined invite: %r", invite)
 
     @commands.Cog.listener()  # ty: ignore[invalid-argument-type]
-    async def on_friend_add(self, friend: steam.Friend) -> None:
-        log.info("Added friend %r", friend)
+    async def on_friend_add(self, steam_friend: steam.Friend) -> None:
+        """Save the new friend's account, index them and sync their match history."""
+        log.info("Added friend %r", steam_friend)
         query = (
             "INSERT INTO ttv_dota_accounts (friend_id, twitch_id) VALUES ($1, $2) ON CONFLICT (friend_id) DO NOTHING;"
         )
-        _, twitch_id = self.bot.pending_invites.pop(friend.id, (None, None))
-        await self.bot.pool.execute(query, friend.id, twitch_id)
-        self.fill_streamers.restart()
-        self.double_check_gc_match_history.restart()
+        _, twitch_id = self.bot.pending_invites.pop(steam_friend.id, (None, None))
+        await self.bot.pool.execute(query, steam_friend.id, twitch_id)
+
+        friend = self._index_friend(steam_friend)
+        await self.analyze_rich_presence(friend)
+        await self.bot.wait_until_gc_ready()
+        await self._sync_history(friend)
 
 
 async def setup(bot: Dota2Bot) -> None:
