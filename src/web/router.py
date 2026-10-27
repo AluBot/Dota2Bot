@@ -8,6 +8,7 @@ Notices
 
 from __future__ import annotations
 
+import contextlib
 from typing import TYPE_CHECKING, Annotated, cast
 
 import steam
@@ -15,10 +16,12 @@ from fastapi import APIRouter, HTTPException, Path, Query, Request, status
 
 from ext.friends import rank_display_name
 from shared import clock
-from shared.typings import local_api as schemas  # ruff: ignore[typing-only-first-party-import]
+from shared.typings import local as schemas  # ruff: ignore[typing-only-first-party-import]
 from utils import const
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
+
     from steam.ext.dota2.models import User
 
     from core import Dota2Bot
@@ -44,6 +47,18 @@ def require_gc_ready(bot: Dota2Bot) -> None:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="I am reconnecting to Dota 2 Game Coordinator, please wait a bit",
         )
+
+
+@contextlib.contextmanager
+def gc_timeout() -> Generator[None]:
+    """Turn Dota 2 Game Coordinator not responding into an HTTP error."""
+    try:
+        yield
+    except TimeoutError:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="Dota 2 Game Coordinator didn't respond in time, please try again",
+        ) from None
 
 
 def steam_timeout() -> HTTPException:
@@ -163,14 +178,15 @@ async def minimal(match_id: int, request: Request) -> schemas.MinimalMatch:
     """Get minimal information about a finished match."""
     bot = get_bot(request)
     require_gc_ready(bot)
-    try:
-        match = await bot.create_partial_match(match_id).minimal()
-    except ValueError:
-        # e.g. practice lobbies leave no trace in the match history
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="I can't find such a match in the match history",
-        ) from None
+    with gc_timeout():
+        try:
+            match = await bot.create_partial_match(match_id).minimal()
+        except ValueError:
+            # e.g. practice lobbies leave no trace in the match history
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="I can't find such a match in the match history",
+            ) from None
     return {
         "id": match.id,
         "lobby_type": match.lobby_type,
@@ -195,11 +211,15 @@ async def minimal(match_id: int, request: Request) -> schemas.MinimalMatch:
 
 @router.get("/previous_match/{friend_id}")
 async def previous_match(
-    friend_id: int, request: Request, index: Annotated[int, Query(ge=0, lt=20)] = 0
+    friend_id: int,
+    request: Request,
+    index: Annotated[int, Query(ge=0, lt=20, description="How far to look back: 0 is the latest match")] = 0,
 ) -> schemas.PreviousMatch:
+    """Get a match from the account's match history."""
     bot = get_bot(request)
     require_gc_ready(bot)
-    matches = list(await bot.create_partial_user(friend_id).match_history())
+    with gc_timeout():
+        matches = list(await bot.create_partial_user(friend_id).match_history())
     if index >= len(matches):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -223,7 +243,8 @@ async def profile_card(friend_id: int, request: Request) -> schemas.ProfileCard:
     """Get the account's Dota 2 rank medal."""
     bot = get_bot(request)
     require_gc_ready(bot)
-    card = await bot.create_partial_user(friend_id).dota2_profile_card()
+    with gc_timeout():
+        card = await bot.create_partial_user(friend_id).dota2_profile_card()
     return {
         "rank_display_name": rank_display_name(card),
     }
