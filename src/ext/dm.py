@@ -1,3 +1,6 @@
+# Copyright (C) 2020-present, Irene Adler ❤ (@Aluerie).
+# Licensed under MPL-2.0, see the LICENSE file for details.
+"""DM commands."""
 from __future__ import annotations
 
 from steam.ext import commands
@@ -5,7 +8,7 @@ from steam.ext import commands
 from core import Dota2Bot
 
 
-class MetaCog(commands.Cog[Dota2Bot]):
+class DirectMessageCommandsCog(commands.Cog[Dota2Bot]):
     """MetaCog."""
 
     @commands.command(aliases=["hi", "yo"])  # ty: ignore[invalid-argument-type]
@@ -17,5 +20,5 @@ class MetaCog(commands.Cog[Dota2Bot]):
 
 
 async def setup(bot: Dota2Bot) -> None:
-    """Load Dota2Bot's extension. Framework of steamio."""
-    await bot.add_cog(MetaCog())
+    """Load the extension (steam.py entry point)."""
+    await bot.add_cog(DirectMessageCommandsCog())

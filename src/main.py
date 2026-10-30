@@ -1,10 +1,6 @@
-"""Main.
-
-Notices
--------
-* MPL-2.0 License, see LICENSE file for more details.
-* Copyright (C) 2020-present @Aluerie.
-"""
+# Copyright (C) 2020-present, Irene Adler ❤ (@Aluerie).
+# Licensed under MPL-2.0, see the LICENSE file for details.
+"""Main."""
 
 import asyncio
 import platform
@@ -32,7 +28,7 @@ ASCII_STARTING_UP_ART = r"""
 async def start_the_bot() -> None:
     """Start the bot."""
     postgres_url = env.POSTGRES_VPS if platform.system() == "Linux" else env.POSTGRES_HOME
-    pool: db.PoolTypedWithAny = await db.create_pool(postgres_url)  # pyright: ignore[reportAssignmentType]
+    pool: db.PoolTypedWithAny = await db.create_pool(postgres_url, "shared")
 
     async with (
         aiohttp.ClientSession() as session,

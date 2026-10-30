@@ -1,10 +1,6 @@
-"""Bot.
-
-Notices
--------
-* MPL-2.0 License, see LICENSE file for more details.
-* Copyright (C) 2020-present @Aluerie.
-"""
+# Copyright (C) 2020-present, Irene Adler ❤ (@Aluerie).
+# Licensed under MPL-2.0, see the LICENSE file for details.
+"""Bot."""
 
 from __future__ import annotations
 
@@ -91,7 +87,7 @@ class Dota2Bot(BotBase, dota2.Bot):
     async def before_login(self) -> None:
         """Before login."""
         await self.load_extension("ext.datafeed")
-        await self.load_extension("ext.meta")
+        await self.load_extension("ext.dm")
         await self.load_extension("ext.friends")
 
     async def _before_login(self) -> None:

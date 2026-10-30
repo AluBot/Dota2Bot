@@ -1,3 +1,7 @@
+# Copyright (C) 2020-present, Irene Adler ❤ (@Aluerie).
+# Licensed under MPL-2.0, see the LICENSE file for details.
+"""Datafeed."""
+
 from __future__ import annotations
 
 import logging
@@ -8,8 +12,6 @@ from steam.ext import commands
 from core import Dota2Bot
 
 log = logging.getLogger(__name__)
-
-__all__ = ("DatafeedCog",)
 
 
 class ItemToUpsert(NamedTuple):
@@ -90,5 +92,5 @@ class DatafeedCog(commands.Cog[Dota2Bot]):
 
 
 async def setup(bot: Dota2Bot) -> None:
-    """Load Dota2Bot's extension. Framework of steamio."""
+    """Load the extension (steam.py entry point)."""
     await bot.add_cog(DatafeedCog())

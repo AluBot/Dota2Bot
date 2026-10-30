@@ -1,11 +1,8 @@
+# Copyright (C) 2020-present, Irene Adler ❤ (@Aluerie).
+# Licensed under MPL-2.0, see the LICENSE file for details.
 """Friends.
 
 Follows the bot's Steam friends through Dota 2 Rich Presence and inspects their live matches.
-
-Notices
--------
-* MPL-2.0 License, see LICENSE file for more details.
-* Copyright (C) 2020-present @Aluerie.
 """
 
 from __future__ import annotations
@@ -1093,5 +1090,5 @@ class FriendsCog(commands.Cog[Dota2Bot]):
 
 
 async def setup(bot: Dota2Bot) -> None:
-    """Load Dota2Bot's extension. Framework of steamio."""
+    """Load the extension (steam.py entry point)."""
     await bot.add_cog(FriendsCog())
