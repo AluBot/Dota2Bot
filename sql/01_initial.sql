@@ -36,6 +36,8 @@ CREATE TABLE
         CONSTRAINT fk_match FOREIGN KEY (match_id) REFERENCES shared.dota_matches (match_id) ON DELETE CASCADE
     );
 
+CREATE INDEX IF NOT EXISTS dota_match_players_match_id_idx ON shared.dota_match_players (match_id);
+
 CREATE TABLE
     IF NOT EXISTS shared.dota_notable_players (
         friend_id BIGINT PRIMARY KEY,
