@@ -66,7 +66,7 @@ class DatafeedCog(commands.Cog[Dota2Bot]):
             service_name="dota2com's datafeed",
         )
 
-    @loop(time=dt.time(hour=6, minute=44, tzinfo=dt.UTC), wait_for_ready=True)
+    @loop(time=dt.time(hour=6, minute=44, tzinfo=dt.UTC))
     async def refresh_dota_constants_items(self) -> None:
         """Daily refresh the database's Dota constants.
 
@@ -78,7 +78,11 @@ class DatafeedCog(commands.Cog[Dota2Bot]):
 
     @refresh_dota_constants_items.before_loop
     async def fill_empty_items_table(self) -> None:
-        """Fill the table right away on a fresh database instead of waiting for the daily time."""
+        """Fill the table right away on a fresh database instead of waiting for the daily time.
+
+        Replaces ``wait_for_ready`` as the loop's ``before_loop``, so it waits for the bot itself.
+        """
+        await self.bot.wait_until_ready()
         try:
             if await self.bot.pool.fetchval("SELECT EXISTS (SELECT 1 FROM dota_constants_items);"):
                 return

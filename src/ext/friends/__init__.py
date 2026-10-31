@@ -24,11 +24,5 @@ if TYPE_CHECKING:
 
 
 async def setup(bot: Dota2Bot) -> None:
-    """Load the extension (steam.py entry point).
-
-    Parameters
-    ----------
-    bot
-        The bot to add the cog to.
-    """
+    """Load the extension (steam.py entry point)."""
     await bot.add_cog(FriendsCog())

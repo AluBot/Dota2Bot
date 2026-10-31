@@ -267,17 +267,14 @@ def _classify_playing(rp: RichPresence) -> Activity:
 
 
 def classify(rp: RichPresence) -> Activity:
-    """Turn Rich Presence into an ``Activity``.
+    """Turn Rich Presence into an ``Activity``: the category of what the friend is doing.
+
+    ``Incomplete`` means "wait for a more definite status".
 
     Parameters
     ----------
     rp
         Rich Presence to classify.
-
-    Returns
-    -------
-    Activity
-        The category of what the friend is doing. ``Incomplete`` means "wait for a more definite status".
     """
     status = rp.status
     if status in _DASHBOARD_STATUSES:

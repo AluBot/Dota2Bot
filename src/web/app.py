@@ -34,7 +34,7 @@ class MyFastAPI(FastAPI):
         super().__init__(exception_handlers={Exception: self._handle_unhandled_exception})
 
     async def _handle_unhandled_exception(self, request: Request, exception: Exception) -> JSONResponse:
-        """Notify about unhandled exceptions and return a generic error response.
+        """Notify about unhandled exceptions and return a generic error response for the client.
 
         Parameters
         ----------
@@ -42,11 +42,6 @@ class MyFastAPI(FastAPI):
             Request during which the exception was raised.
         exception
             Unhandled exception.
-
-        Returns
-        -------
-        JSONResponse
-            Generic error response for the client.
         """
         route = request.scope.get("route")
         embed = (

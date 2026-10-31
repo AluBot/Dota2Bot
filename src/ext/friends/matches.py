@@ -175,10 +175,7 @@ class TrackedMatch(LiveMatch, ABC):
     async def fetch_snapshot(self) -> MatchSnapshot:
         """Fetch the current match data.
 
-        Raises
-        ------
-        Exception
-            Any exception, if the data is not available (yet). The attempt is repeated later.
+        Any exception means that the data is not available (yet), the attempt is repeated later.
         """
 
     async def on_live(self) -> None:

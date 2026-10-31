@@ -101,17 +101,12 @@ class FriendsCog(commands.Cog[Dota2Bot]):
     # --- rich presence ---
 
     def _index_friend(self, steam_friend: steam.Friend) -> Friend:
-        """Add a friend of the bot into the index, unless they are there already.
+        """Add a friend of the bot into the index, unless they are there already, and get the indexed friend.
 
         Parameters
         ----------
         steam_friend
             Friend from the bot's Steam friend list.
-
-        Returns
-        -------
-        Friend
-            The indexed friend.
         """
         friend = self.bot.friends_index.get(steam_friend.id)
         if friend is None:
