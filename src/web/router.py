@@ -10,7 +10,8 @@ from typing import TYPE_CHECKING, Annotated, cast
 import steam
 from fastapi import APIRouter, HTTPException, Path, Query, Request, status
 
-from ext.friends import rank_display_name
+from core import PendingInvite
+from ext.friends.models import rank_display_name
 from shared import clock
 from shared.typings import local as schemas  # ruff: ignore[typing-only-first-party-import]
 from utils import const
@@ -271,7 +272,7 @@ async def accept_invite(friend_id: int, twitch_id: str, request: Request) -> sch
     """Allow the bot to accept a friend invite from this Steam user for the next few minutes."""
     bot = get_bot(request)
     user = await fetch_user_by_friend_id(bot, friend_id)
-    bot.pending_invites[user.id] = (clock.utcnow(), twitch_id)
+    bot.pending_invites[user.id] = PendingInvite(clock.utcnow(), twitch_id)
     return {
         "id": user.id,
         "name": user.name,

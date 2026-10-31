@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "aiohttp",
     "asyncpg",
     "discord-py[speed]",
     "fastapi[standard-no-fastapi-cloud-cli]",
@@ -14,10 +15,7 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = [
-    "asyncpg-stubs>=0.31.3",
-    "ty>=0.0.90",
-]
+dev = ["asyncpg-stubs", "ty", "ruff"]
 
 [tool.uv.sources]
 steamio = { git = "https://github.com/Aluerie/steam.py", rev = "introduce-ext.dota2" }
@@ -70,6 +68,7 @@ ignore = [
     "too-many-positional-arguments",
     "too-many-public-methods",
     "too-many-return-statements",
+    "too-many-statements",
     "too-many-statements-in-try-clause",
     # Todo
     "line-contains-todo",
@@ -94,7 +93,7 @@ flake8-quotes.inline-quotes = "double"
 "{src/ext/beta.py,templates/fresh_beta.py,src/xi.py,*.ipynb}" = [
     # These files are my playground to mess around and test stuff.
     "ANN",
-    "D", 
+    "D",
     "missing-copyright-notice",
     "print",
     "unused-method-argument",

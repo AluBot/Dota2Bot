@@ -55,52 +55,7 @@ class DatafeedCog(commands.Cog[Dota2Bot]):
             service_name="dota2com's datafeed",
         )
 
-    # a flaky network shouldn't permanently stop a daily task, so retry on these instead of dying
     refresh_dota_constants_items.add_exception_type(aiohttp.ClientError, TimeoutError)
-
-        # # Stratz
-        # try:
-        #     items = await self.bot.stratz.get_items()
-        # except errors.APIDataError as err:
-        #     log.warning("🍋 Stratz API error: `get_items`", exc_info=err)
-        #     # Then we should try with OpenDota
-        # else:
-        #     await self.upsert_constants_items(
-        #         to_insert=[
-        #             ItemToUpsert(
-        #                 item_id=item["id"],
-        #                 # Sometimes Stratz return `None` for item display names (hence `or ""`).
-        #                 # Also they put '\x00' into their responses which is not supported by PostgresQL
-        #                 display_name=(item["displayName"] or "").replace("\x00", ""),
-        #             )
-        #             for item in items
-        #         ],
-        #         service_name="Stratz",
-        #     )
-        #     return
-
-        # # Opendota
-        # try:
-        #     items = await self.bot.opendota.get_items()
-        # except errors.APIDataError as err:
-        #     log.warning("🍋 Opendota API error: `get_items`", exc_info=err)
-        #     # Then we are cooked ?
-        # else:
-        #     await self.upsert_constants_items(
-        #         to_insert=[
-        #             ItemToUpsert(
-        #                 item_id=item["id"],
-        #                 # Some Opendota items are missing `dname` field.
-        #                 display_name=item.get("dname", ""),
-        #             )
-        #             for _key, item in items.items()
-        #         ],
-        #         service_name="Opendota",
-        #     )
-        #     return
-
-        # msg = "Something went wrong with `refresh_database_dota_constants`."
-        # raise errors.SomethingWentWrongError(msg)
 
 
 async def setup(bot: Dota2Bot) -> None:

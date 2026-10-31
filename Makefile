@@ -34,3 +34,10 @@ check:  # Run both typechecker and linter (simply calls "make ruff" and "make ty
 	make ruff
 	Write-Host 'Running "make ty"' -ForegroundColor Magenta
 	make ty
+
+
+.PHONY: update
+.SILENT: update
+update:  # Update dependencies
+	uv lock --upgrade
+	uv sync

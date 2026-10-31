@@ -40,10 +40,8 @@ async def start_the_bot() -> None:
     ):
         web_app = MyFastAPI(bot)
         web_app.include_router(router)
-        # host and port have to match `LocalAPI.BASE_URL` in `shared.apis.local`
-        config = uvicorn.Config(web_app, host=LOCAL_API_HOST, port=LOCAL_API_PORT)
+        config = uvicorn.Config(web_app, host=LOCAL_API_HOST, port=LOCAL_API_PORT, log_config=None)
         server = uvicorn.Server(config)
-        # unlike `asyncio.gather`, a task group cancels the other service if one of them dies
         async with asyncio.TaskGroup() as group:
             group.create_task(bot.login())
             group.create_task(server.serve())

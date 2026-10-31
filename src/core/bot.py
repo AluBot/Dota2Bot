@@ -8,7 +8,7 @@ import asyncio
 import logging
 import platform
 import sys
-from typing import TYPE_CHECKING, Any, override
+from typing import TYPE_CHECKING, Any, NamedTuple, override
 
 import discord
 import steam
@@ -28,12 +28,30 @@ if TYPE_CHECKING:
 
     from aiohttp import ClientSession
 
-    from ext.friends import Friend
+    from ext.friends.models import Friend
     from shared.concepts import db
 
 log = logging.getLogger(__name__)
 
-__all__ = ("Dota2Bot",)
+__all__ = (
+    "Dota2Bot",
+    "PendingInvite",
+)
+
+
+class PendingInvite(NamedTuple):
+    """A Steam user the bot is going to accept a friend invite from.
+
+    Attributes
+    ----------
+    sent_at
+        When the website has allowed the bot to accept the invite.
+    twitch_id
+        Twitch account that is going to be linked to the Steam account.
+    """
+
+    sent_at: dt.datetime
+    twitch_id: str
 
 
 class Dota2Bot(BotBase, dota2.Bot):
@@ -52,18 +70,20 @@ class Dota2Bot(BotBase, dota2.Bot):
         self.pool: db.PoolTypedWithAny = pool
 
         if platform.system() == "Linux":
-            # self.username is used internally by steamio
+            # self.username is used internally by steamio so shouldn't use it here:
+            test = False
             self._username: str = env.STEAM_IRENESBOT_USERNAME
             self._password: str = env.STEAM_IRENESBOT_PASSWORD
             dev_ping = "<@&1116171071528374394>"
         else:
+            test = True
             self._username: str = env.STEAM_IRENESTEST_USERNAME
             self._password: str = env.STEAM_IRENESTEST_PASSWORD
             dev_ping = "<@&1337106675433340990>"
 
         super().__init__(
             self.session,
-            test=False,
+            test=test,
             dev_ping=dev_ping,
             error_webhook_url=env.WEBHOOK_ERROR,
             spam_webhook_url=env.WEBHOOK_NOTIFICATION,
@@ -78,7 +98,7 @@ class Dota2Bot(BotBase, dota2.Bot):
         # Attributes needed for `ext.friends`
         self.friends_index: dict[int, Friend] = {}  # DO NOT CONFUSE IT WITH steamIO's self.friends
         self.friend_index_ready: asyncio.Event = asyncio.Event()
-        self.pending_invites: dict[int, tuple[dt.datetime, str]] = {}
+        self.pending_invites: dict[int, PendingInvite] = {}
 
     async def before_login(self) -> None:
         """Before login."""
