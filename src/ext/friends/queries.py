@@ -15,6 +15,7 @@ from __future__ import annotations
 __all__ = (
     "DELETE_ABANDONED_PENDING_MATCHES",
     "DELETE_MATCHES_BEYOND_KEPT_LIMIT",
+    "DELETE_STALE_LIVE_MATCHES",
     "INSERT_ACCOUNT",
     "INSERT_HISTORY_MATCH",
     "INSERT_HISTORY_PLAYER",
@@ -87,6 +88,12 @@ DELETE_MATCHES_BEYOND_KEPT_LIMIT = """
     DELETE FROM dota_matches
     WHERE live = $1
       AND match_id NOT IN (SELECT match_id FROM ranked WHERE rn <= $2);
+"""
+# A match can't stay live for long. Such rows are leftovers of a restart in the middle of a match,
+# which is the only way the bot loses track of a live match.
+DELETE_STALE_LIVE_MATCHES = """
+    DELETE FROM dota_matches
+    WHERE live = $1 AND outcome IS NULL AND start_time < $2;
 """
 DELETE_ABANDONED_PENDING_MATCHES = """
     DELETE FROM dota_matches

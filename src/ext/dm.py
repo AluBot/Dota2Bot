@@ -11,7 +11,7 @@ from utils import const
 
 
 class DirectMessageCommandsCog(commands.Cog[Dota2Bot]):
-    """MetaCog."""
+    """Commands that work in the bot's direct messages."""
 
     @commands.command(aliases=["hi", "yo"])  # ty: ignore[invalid-argument-type]
     async def hello(self, ctx: commands.Context[Dota2Bot]) -> None:

@@ -373,6 +373,9 @@ class FriendsCog(commands.Cog[Dota2Bot]):
             queries.DELETE_MATCHES_BEYOND_KEPT_LIMIT, MatchState.Completed, MATCHES_KEPT_PER_FRIEND
         )
         await self.bot.pool.execute(
+            queries.DELETE_STALE_LIVE_MATCHES, MatchState.Live, clock.utcnow() - LIVE_MATCH_MAX_AGE
+        )
+        await self.bot.pool.execute(
             queries.DELETE_ABANDONED_PENDING_MATCHES,
             MatchState.Pending,
             MAX_FAILED_LOOKUPS,

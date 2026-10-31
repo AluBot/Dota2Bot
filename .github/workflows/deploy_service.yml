@@ -23,4 +23,3 @@ jobs:
             git submodule update --init --recursive
             ~/.local/bin/uv sync --no-dev
             sudo systemctl restart dota2bot.service
-            sudo systemctl start dota2bot.service

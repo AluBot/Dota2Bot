@@ -18,9 +18,7 @@ from steam.ext import dota2
 from config import env
 from shared import fmt
 from shared.apis.dota2com import Dota2comClient
-from shared.apis.opendota import OpenDotaClient
 from shared.apis.steam_web import SteamWebAPIClient
-from shared.apis.stratz import StratzClient
 from shared.concepts.base_bot import BotBase
 
 if TYPE_CHECKING:
@@ -90,8 +88,6 @@ class Dota2Bot(BotBase, dota2.Bot):
         )
         super(dota2.Bot, self).__init__(command_prefix="!", state=PersonaState.Online)
 
-        self.opendota = OpenDotaClient(session=session)
-        self.stratz = StratzClient(bearer_token=env.STRATZ_BEARER, session=session)
         self.steam_web = SteamWebAPIClient(api_key=env.STEAM_API_KEY, session=session)
         self.dota2com = Dota2comClient(session=session)
 
