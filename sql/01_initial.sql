@@ -33,7 +33,6 @@ CREATE TABLE
         hero_id INT NOT NULL,
         player_slot INT NOT NULL,
         abandon BOOLEAN DEFAULT (NULL),
-        CONSTRAINT fk_account FOREIGN KEY (friend_id) REFERENCES shared.dota_accounts (friend_id) ON DELETE CASCADE,
         CONSTRAINT fk_match FOREIGN KEY (match_id) REFERENCES shared.dota_matches (match_id) ON DELETE CASCADE
     );
 

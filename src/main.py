@@ -28,7 +28,7 @@ ASCII_STARTING_UP_ART = r"""
 async def start_the_bot() -> None:
     """Start the bot."""
     postgres_url = env.POSTGRES_VPS if platform.system() == "Linux" else env.POSTGRES_HOME
-    pool: db.PoolTypedWithAny = await db.create_pool(postgres_url, "public,shared")
+    pool: db.PoolTypedWithAny = await db.create_pool(postgres_url, "shared")
 
     async with (
         aiohttp.ClientSession() as session,
