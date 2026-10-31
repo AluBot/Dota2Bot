@@ -627,7 +627,7 @@ class PlayingMatch(TrackedMatch):
             if not self.has_match_history:
                 return
             query = """
-                INSERT INTO ttv_dota_matches
+                INSERT INTO dota_matches
                 (match_id, start_time, lobby_type, game_mode, live)
                 VALUES ($1, $2, $3, $4, $5)
                 ON CONFLICT (match_id) DO NOTHING;
@@ -655,7 +655,7 @@ class PlayingMatch(TrackedMatch):
             log.warning("%r: friend %r is not among the match players", self, friend)
             return
         query = """
-            INSERT INTO ttv_dota_match_players
+            INSERT INTO dota_match_players
             (friend_id, match_id, hero_id, player_slot)
             VALUES ($1, $2, $3, $4)
             ON CONFLICT (friend_id, match_id) DO NOTHING;
@@ -796,7 +796,7 @@ class FriendsCog(commands.Cog[Dota2Bot]):
             await self.conclude_match(friend)
             return
 
-        query = "UPDATE ttv_dota_accounts SET last_seen = $1 WHERE friend_id = $2;"
+        query = "UPDATE dota_accounts SET last_seen = $1 WHERE friend_id = $2;"
         await self.bot.pool.execute(query, clock.utcnow(), friend.steam.id)
 
         match classify(friend.rich_presence):
@@ -864,7 +864,7 @@ class FriendsCog(commands.Cog[Dota2Bot]):
             live.cancel()
         elif isinstance(live, PlayingMatch) and live.state == MatchState.Live:
             live.state = MatchState.Pending
-            query = "UPDATE ttv_dota_matches SET live = $1 WHERE match_id = $2;"
+            query = "UPDATE dota_matches SET live = $1 WHERE match_id = $2;"
             await self.bot.pool.execute(query, MatchState.Pending, live.id)
 
     @tasks.loop(seconds=20)
@@ -881,7 +881,7 @@ class FriendsCog(commands.Cog[Dota2Bot]):
         * Another option is to use opendota api (stratz is too slow -
           they don't allow access to data until full parse is done)
         """
-        query = "SELECT match_id FROM ttv_dota_matches WHERE outcome IS NULL AND live = $1 AND failed < $2;"
+        query = "SELECT match_id FROM dota_matches WHERE outcome IS NULL AND live = $1 AND failed < $2;"
         rows = await self.bot.pool.fetch(query, MatchState.Pending, MAX_FAILED_LOOKUPS)
 
         for row in rows:
@@ -894,7 +894,7 @@ class FriendsCog(commands.Cog[Dota2Bot]):
                 minimal = await self.bot.create_partial_match(match_id).minimal()
             except ValueError:
                 # matches that failed too many times get ignored by the query above
-                query = "UPDATE ttv_dota_matches SET failed = failed + 1 WHERE match_id = $1;"
+                query = "UPDATE dota_matches SET failed = failed + 1 WHERE match_id = $1;"
                 await self.bot.pool.execute(query, match_id)
                 continue
             except Exception:
@@ -902,7 +902,7 @@ class FriendsCog(commands.Cog[Dota2Bot]):
                 log.exception("Failed to get the outcome of the match %s", match_id)
                 continue
 
-            query = "UPDATE ttv_dota_matches SET outcome = $1, live = $3 WHERE match_id = $2;"
+            query = "UPDATE dota_matches SET outcome = $1, live = $3 WHERE match_id = $2;"
             await self.bot.pool.execute(query, minimal.outcome, match_id, MatchState.Completed)
 
     # --- match history and database care ---
@@ -936,9 +936,9 @@ class FriendsCog(commands.Cog[Dota2Bot]):
         # Fast path: a match we already know as completed only needs its `abandon` flag refreshed,
         # which comes from the match history entry. No need to ask for `.minimal()` again.
         query = """
-            UPDATE ttv_dota_match_players mp
+            UPDATE dota_match_players mp
             SET abandon = $3
-            FROM ttv_dota_matches m
+            FROM dota_matches m
             WHERE m.match_id = mp.match_id AND mp.friend_id = $1 AND mp.match_id = $2 AND m.live = $4;
         """
         status = await self.bot.pool.execute(query, friend_id, entry.id, entry.abandon, MatchState.Completed)
@@ -954,7 +954,7 @@ class FriendsCog(commands.Cog[Dota2Bot]):
 
         # A match that is still pending (e.g. the bot has given up looking for its outcome) gets its outcome here.
         query = """
-            INSERT INTO ttv_dota_matches
+            INSERT INTO dota_matches
                 (match_id, start_time, lobby_type, game_mode, outcome, live)
             VALUES ($1, $2, $3, $4, $5, $6)
             ON CONFLICT (match_id) DO
@@ -970,7 +970,7 @@ class FriendsCog(commands.Cog[Dota2Bot]):
             MatchState.Completed,
         )
         query = """
-            INSERT INTO ttv_dota_match_players
+            INSERT INTO dota_match_players
             (friend_id, match_id, hero_id, player_slot, abandon)
             VALUES ($1, $2, $3, $4, $5)
             ON CONFLICT (friend_id, match_id) DO
@@ -994,17 +994,17 @@ class FriendsCog(commands.Cog[Dota2Bot]):
                            PARTITION BY mp.friend_id
                            ORDER BY m.start_time DESC, m.match_id DESC
                        ) AS rn
-                FROM ttv_dota_match_players mp
-                JOIN ttv_dota_matches m ON m.match_id = mp.match_id
+                FROM dota_match_players mp
+                JOIN dota_matches m ON m.match_id = mp.match_id
             )
-            DELETE FROM ttv_dota_matches
+            DELETE FROM dota_matches
             WHERE live = $1
               AND match_id NOT IN (SELECT match_id FROM ranked WHERE rn <= $2);
         """
         await self.bot.pool.execute(query, MatchState.Completed, MATCHES_KEPT_PER_FRIEND)
 
         query = """
-            DELETE FROM ttv_dota_matches
+            DELETE FROM dota_matches
             WHERE live = $1 AND outcome IS NULL AND failed >= $2 AND start_time < $3;
         """
         await self.bot.pool.execute(
