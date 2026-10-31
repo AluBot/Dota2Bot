@@ -2,3 +2,5 @@
 *.pyc
 *.log
 .env
+
+xi.py

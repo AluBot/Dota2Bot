@@ -1,16 +1,16 @@
 [project]
-name = "steamrichpresencewatcher"
+name = "Dota2Bot"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
-    "asyncpg>=0.31.0",
-    "discord-py[speed]>=2.7.1",
-    "fastapi[standard-no-fastapi-cloud-cli]>=0.142.2",
-    "orjson>=3.12.0",
-    "pydantic-settings>=2.15.0",
-    "steamio>=1.2.0",
+    "asyncpg",
+    "discord-py[speed]",
+    "fastapi[standard-no-fastapi-cloud-cli]",
+    "orjson",
+    "pydantic-settings",
+    "steamio",
 ]
 
 [dependency-groups]
@@ -25,11 +25,11 @@ steamio = { git = "https://github.com/Aluerie/steam.py", rev = "introduce-ext.do
 
 [tool.ty.rules]
 all = "error"
-dynamic-function-decorator-return = "ignore" # TwitchIO's decorators return `Any`
-possibly-missing-import = "ignore" # False positives, maybe we'll try it later.
-unsound-assignment = "ignore" # `Any` is fine
-unsound-return-statement = "ignore" # `Any` is fine
-unsound-yield = "ignore" # `Any` is fine
+dynamic-function-decorator-return = "ignore"
+possibly-missing-import = "ignore"
+unsound-assignment = "ignore"
+unsound-return-statement = "ignore"
+unsound-yield = "ignore"
 
 
 [tool.ruff]
@@ -91,7 +91,7 @@ unfixable = []
 flake8-quotes.inline-quotes = "double"
 
 [tool.ruff.lint.per-file-ignores]
-"{src/ext/beta.py,templates/fresh_beta.py,src/alpha.py,src/zeta.py,*.ipynb}" = [
+"{src/ext/beta.py,templates/fresh_beta.py,src/xi.py,*.ipynb}" = [
     # These files are my playground to mess around and test stuff.
     "ANN",
     "D", 

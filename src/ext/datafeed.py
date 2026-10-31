@@ -4,12 +4,14 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import logging
 from typing import NamedTuple
 
 from steam.ext import commands
 
 from core import Dota2Bot
+from shared.concepts import loop
 
 log = logging.getLogger(__name__)
 
@@ -34,61 +36,59 @@ class DatafeedCog(commands.Cog[Dota2Bot]):
         await self.bot.pool.executemany(query, to_insert)
         log.debug("🍋 Database Dota Constants: Updated items with %s API", service_name)
 
-    # @loop(time=datetime.time(hour=6, minute=44))  # (count=1)
-    # async def refresh_dota_constants_items(self) -> None:
-    #     """Daily Refresh Database's Dota Constants.
+    @loop(time=dt.time(hour=6, minute=44, tzinfo=dt.UTC))
+    async def refresh_dota_constants_items(self) -> None:
+        """Daily Refresh Database's Dota Constants."""
+        log.debug("🍋 Database Dota Constants: Refreshing `dota_constants_items`")
+        items = await self.bot.dota2com.item_list()
+        await self.upsert_constants_items(
+            to_insert=[ItemToUpsert(item_id=item.id, display_name=item.display_name) for item in items],
+            service_name="dota2com's datafeed",
+        )
 
-    #     Notes
-    #     -----
-    #     * IreBot currently only utilizes `dota_constants_items` table.
-    #     * This task first tries to update stuff with Stratz API, if not successful then fallback to OpenDota.
+        # # Stratz
+        # try:
+        #     items = await self.bot.stratz.get_items()
+        # except errors.APIDataError as err:
+        #     log.warning("🍋 Stratz API error: `get_items`", exc_info=err)
+        #     # Then we should try with OpenDota
+        # else:
+        #     await self.upsert_constants_items(
+        #         to_insert=[
+        #             ItemToUpsert(
+        #                 item_id=item["id"],
+        #                 # Sometimes Stratz return `None` for item display names (hence `or ""`).
+        #                 # Also they put '\x00' into their responses which is not supported by PostgresQL
+        #                 display_name=(item["displayName"] or "").replace("\x00", ""),
+        #             )
+        #             for item in items
+        #         ],
+        #         service_name="Stratz",
+        #     )
+        #     return
 
-    #     """
-    #     log.debug("🍋 Database Dota Constants: Refreshing `dota_constants_items`")
+        # # Opendota
+        # try:
+        #     items = await self.bot.opendota.get_items()
+        # except errors.APIDataError as err:
+        #     log.warning("🍋 Opendota API error: `get_items`", exc_info=err)
+        #     # Then we are cooked ?
+        # else:
+        #     await self.upsert_constants_items(
+        #         to_insert=[
+        #             ItemToUpsert(
+        #                 item_id=item["id"],
+        #                 # Some Opendota items are missing `dname` field.
+        #                 display_name=item.get("dname", ""),
+        #             )
+        #             for _key, item in items.items()
+        #         ],
+        #         service_name="Opendota",
+        #     )
+        #     return
 
-    #     # Stratz
-    #     try:
-    #         items = await self.bot.stratz.get_items()
-    #     except errors.APIDataError as err:
-    #         log.warning("🍋 Stratz API error: `get_items`", exc_info=err)
-    #         # Then we should try with OpenDota
-    #     else:
-    #         await self.upsert_constants_items(
-    #             to_insert=[
-    #                 ItemToUpsert(
-    #                     item_id=item["id"],
-    #                     # Sometimes Stratz return `None` for item display names (hence `or ""`).
-    #                     # Also they put '\x00' into their responses which is not supported by PostgresQL
-    #                     display_name=(item["displayName"] or "").replace("\x00", ""),
-    #                 )
-    #                 for item in items
-    #             ],
-    #             service_name="Stratz",
-    #         )
-    #         return
-
-    #     # Opendota
-    #     try:
-    #         items = await self.bot.opendota.get_items()
-    #     except errors.APIDataError as err:
-    #         log.warning("🍋 Opendota API error: `get_items`", exc_info=err)
-    #         # Then we are cooked ?
-    #     else:
-    #         await self.upsert_constants_items(
-    #             to_insert=[
-    #                 ItemToUpsert(
-    #                     item_id=item["id"],
-    #                     # Some Opendota items are missing `dname` field.
-    #                     display_name=item.get("dname", ""),
-    #                 )
-    #                 for _key, item in items.items()
-    #             ],
-    #             service_name="Opendota",
-    #         )
-    #         return
-
-    #     msg = "Something went wrong with `refresh_database_dota_constants`."
-    #     raise errors.SomethingWentWrongError(msg)
+        # msg = "Something went wrong with `refresh_database_dota_constants`."
+        # raise errors.SomethingWentWrongError(msg)
 
 
 async def setup(bot: Dota2Bot) -> None:

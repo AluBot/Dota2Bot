@@ -650,17 +650,14 @@ class PlayingMatch(TrackedMatch):
         if friend.rich_presence.status == Status.Coaching:
             # The match will not be in a coach's match history, so there is no W/L to track.
             return
-        player = self.players.get(friend.steam.id)
-        if player is None:
-            log.warning("%r: friend %r is not among the match players", self, friend)
-            return
-        query = """
-            INSERT INTO dota_match_players
-            (friend_id, match_id, hero_id, player_slot)
-            VALUES ($1, $2, $3, $4)
-            ON CONFLICT (friend_id, match_id) DO NOTHING;
-        """
-        await self.bot.pool.execute(query, friend.steam.id, self.id, player.hero.id, player.player_slot)
+        for player in self.players.values():
+            query = """
+                INSERT INTO dota_match_players
+                (friend_id, match_id, hero_id, player_slot)
+                VALUES ($1, $2, $3, $4)
+                ON CONFLICT (friend_id, match_id) DO NOTHING;
+            """
+            await self.bot.pool.execute(query, friend.steam.id, self.id, player.hero.id, player.player_slot)
 
 
 def _get_or_create[T: LiveMatch](index: dict[str, T], key: str, factory: Callable[[], T]) -> T:
@@ -1078,7 +1075,7 @@ class FriendsCog(commands.Cog[Dota2Bot]):
         """Save the new friend's account, index them and sync their match history."""
         log.info("Added friend %r", steam_friend)
         query = (
-            "INSERT INTO ttv_dota_accounts (friend_id, twitch_id) VALUES ($1, $2) ON CONFLICT (friend_id) DO NOTHING;"
+            "INSERT INTO dota_accounts (friend_id, twitch_id) VALUES ($1, $2) ON CONFLICT (friend_id) DO NOTHING;"
         )
         _, twitch_id = self.bot.pending_invites.pop(steam_friend.id, (None, None))
         await self.bot.pool.execute(query, steam_friend.id, twitch_id)
