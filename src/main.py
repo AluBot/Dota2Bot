@@ -14,6 +14,9 @@ from shared.concepts import db, logs
 from web.app import MyFastAPI
 from web.router import router
 
+LOCAL_API_HOST = "127.0.0.1"
+LOCAL_API_PORT = 8000
+
 # generated at https://patorjk.com/software/taag/ using "Standard" font
 ASCII_STARTING_UP_ART = r"""
   ____   ___ _____  _    ____  ____   ___ _____   ____ _____  _    ____  ____ _____ ___ _   _  ____
@@ -37,12 +40,17 @@ async def start_the_bot() -> None:
     ):
         web_app = MyFastAPI(bot)
         web_app.include_router(router)
-        config = uvicorn.Config(web_app)
+        # host and port have to match `LocalAPI.BASE_URL` in `shared.apis.local`
+        config = uvicorn.Config(web_app, host=LOCAL_API_HOST, port=LOCAL_API_PORT)
         server = uvicorn.Server(config)
-        await asyncio.gather(bot.login(), server.serve())
+        # unlike `asyncio.gather`, a task group cancels the other service if one of them dies
+        async with asyncio.TaskGroup() as group:
+            group.create_task(bot.login())
+            group.create_task(server.serve())
 
 
 def launch() -> None:
+    """Set up logging and run the bot together with its local API."""
     with logs.setup_logging(
         starting_up_art=ASCII_STARTING_UP_ART,
         filename="d2b.log",

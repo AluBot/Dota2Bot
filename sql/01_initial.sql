@@ -11,7 +11,7 @@ CREATE TABLE
     IF NOT EXISTS shared.dota_accounts (
         friend_id BIGINT PRIMARY KEY, -- steam32id (friend id) format;
         twitch_id TEXT NOT NULL REFERENCES irenesbot.tokens (user_id) ON DELETE CASCADE,
-        last_seen TIMESTAMPTZ DEFAULT NOW (),
+        last_seen TIMESTAMPTZ DEFAULT NOW ()
     );
 
 CREATE TABLE

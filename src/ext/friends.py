@@ -19,13 +19,13 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Self, override
 
 import steam
-from steam.enums import Enum as SteampyEnum
 from steam.ext import commands, dota2
 
 from core import Dota2Bot
 from shared import clock
 from shared.apis.local import MatchState
 from shared.concepts import tasks
+from utils.const import SteampyStrEnum
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -45,6 +45,7 @@ MAX_FAILED_LOOKUPS = 17  # pending matches that failed this many outcome lookups
 MATCH_HISTORY_MAX_AGE = dt.timedelta(hours=48)
 LIVE_MATCH_MAX_AGE = dt.timedelta(hours=8)
 MATCHES_KEPT_PER_FRIEND = 20
+PENDING_INVITE_TTL = dt.timedelta(minutes=10)
 PARTY_MEMBER_RE = re.compile(r"members\s\{\ssteam_id:\s([0-9]+)")
 
 
@@ -113,24 +114,6 @@ class SpectatingPartialMatch(Activity):
 
 
 # --- RICH PRESENCE ----------------------------------------------------------------------------------------------------
-
-
-class SteampyStrEnum(SteampyEnum, str):
-    """An enumeration where all the values are strings, emulates `enum.StrEnum`.
-
-    Note, that Enum class is from `steam` package, not from the `enum` stdlib.
-    """
-
-    __slots__ = ()
-
-    if TYPE_CHECKING:
-
-        @override
-        def __new__(cls, value: str) -> Self: ...  # ty: ignore[invalid-method-override]
-
-        @override
-        @classmethod
-        def try_value(cls, value: str) -> Self: ...
 
 
 class Status(SteampyStrEnum):
@@ -566,7 +549,9 @@ class SpectatingMatch(TrackedMatch):
         # Steam Web API uses Steam IDs for servers in id64 format, but Rich Presence provides them in id3.
         # Example: id3: [A:1:3513917470:30261] -> id64: 90201966066671646.
         steam_id = steam.ID.from_id3(watching_server)
-        assert steam_id is not None, "Failed to get Steam ID from id3."
+        if steam_id is None:
+            msg = f"Failed to get Steam ID from id3 {watching_server!r}."
+            raise ValueError(msg)
         self._server_id64: int = steam_id.id64
         self.server_steam_id = self._server_id64
         self.start()
@@ -650,14 +635,18 @@ class PlayingMatch(TrackedMatch):
         if friend.rich_presence.status == Status.Coaching:
             # The match will not be in a coach's match history, so there is no W/L to track.
             return
-        for player in self.players.values():
-            query = """
-                INSERT INTO dota_match_players
-                (friend_id, match_id, hero_id, player_slot)
-                VALUES ($1, $2, $3, $4)
-                ON CONFLICT (friend_id, match_id) DO NOTHING;
-            """
-            await self.bot.pool.execute(query, friend.steam.id, self.id, player.hero.id, player.player_slot)
+        # only the friend's own hero and slot count, not those of the other players in the match
+        player = self.players.get(friend.steam.id)
+        if player is None:
+            log.warning("%r: friend %r is not among the match players", self, friend)
+            return
+        query = """
+            INSERT INTO dota_match_players
+            (friend_id, match_id, hero_id, player_slot)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (friend_id, match_id) DO NOTHING;
+        """
+        await self.bot.pool.execute(query, friend.steam.id, self.id, player.hero.id, player.player_slot)
 
 
 def _get_or_create[T: LiveMatch](index: dict[str, T], key: str, factory: Callable[[], T]) -> T:
@@ -830,7 +819,8 @@ class FriendsCog(commands.Cog[Dota2Bot]):
             "Uncategorized Rich Presence Status\n"
             f"friend=`{friend!r}`\n"
             f"status=`{rich_presence.status.value}`\n"
-            f"rich_presence.raw=```json\n{pprint.pformat(rich_presence.raw)}```"
+            # Discord messages are limited to 2000 characters
+            f"rich_presence.raw=```json\n{pprint.pformat(rich_presence.raw)[:1200]}```"
         )
         log.warning(text)
         await self.bot.notify_developers(text)
@@ -868,7 +858,7 @@ class FriendsCog(commands.Cog[Dota2Bot]):
     async def process_pending_matches(self) -> None:
         """Find out the outcome of pending matches.
 
-        Runs all the time: with no pending matches it's one cheap query every few seconds.
+        Runs all the time: with no pending matches it's one cheap query every 20 seconds.
         That also picks up matches left pending by the previous run.
 
         Notes
@@ -1013,6 +1003,11 @@ class FriendsCog(commands.Cog[Dota2Bot]):
             for key in [key for key, live in index.items() if live.started_at < cut_off]:
                 del index[key]
 
+        # invites that were never used would stay in memory forever otherwise
+        invite_cut_off = clock.utcnow() - PENDING_INVITE_TTL
+        for friend_id in [fid for fid, (sent_dt, _) in self.bot.pending_invites.items() if sent_dt < invite_cut_off]:
+            del self.bot.pending_invites[friend_id]
+
     # --- task care ---
 
     @fill_friends.before_loop
@@ -1032,7 +1027,8 @@ class FriendsCog(commands.Cog[Dota2Bot]):
         except TimeoutError:
             log.critical("🔴 Failed to wait for Dota 2 Game Coordinator to get ready - restarting the bot. 🔴")
             try:
-                await asyncio.create_subprocess_exec("sudo", "systemctl", "restart", "dota2bot")
+                process = await asyncio.create_subprocess_exec("sudo", "systemctl", "restart", "dota2bot")
+                await process.wait()
             except OSError:
                 log.exception("Failed to restart the bot's process")
             await self.bot.wait_until_gc_ready()
@@ -1048,7 +1044,7 @@ class FriendsCog(commands.Cog[Dota2Bot]):
 
     @commands.Cog.listener()  # ty: ignore[invalid-argument-type]
     async def on_invite(self, invite: steam.Invite) -> None:
-        """Accept user invites that the bot has asked for within the last 10 minutes, decline everything else."""
+        """Accept user invites that the bot has asked for recently, decline non-user invites, ignore the rest."""
         log.info("Received invite: %r", invite)
         if not isinstance(invite, steam.UserInvite):
             method = getattr(invite, "decline", None)
@@ -1057,7 +1053,7 @@ class FriendsCog(commands.Cog[Dota2Bot]):
             return
 
         sent_dt, _ = self.bot.pending_invites.get(invite.author.id, (None, None))
-        if sent_dt is not None and clock.utcnow() - sent_dt < dt.timedelta(minutes=10):
+        if sent_dt is not None and clock.utcnow() - sent_dt < PENDING_INVITE_TTL:
             await invite.accept()
 
     @commands.Cog.listener()  # ty: ignore[invalid-argument-type]
@@ -1078,7 +1074,11 @@ class FriendsCog(commands.Cog[Dota2Bot]):
             "INSERT INTO dota_accounts (friend_id, twitch_id) VALUES ($1, $2) ON CONFLICT (friend_id) DO NOTHING;"
         )
         _, twitch_id = self.bot.pending_invites.pop(steam_friend.id, (None, None))
-        await self.bot.pool.execute(query, steam_friend.id, twitch_id)
+        if twitch_id is None:
+            # `twitch_id` is NOT NULL, so there is no account to save for someone the website doesn't know
+            log.warning("Friend %r was added without a pending invite, not saving the account.", steam_friend)
+        else:
+            await self.bot.pool.execute(query, steam_friend.id, twitch_id)
 
         friend = self._index_friend(steam_friend)
         await self.analyze_rich_presence(friend)

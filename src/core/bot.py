@@ -44,13 +44,9 @@ class Dota2Bot(BotBase, dota2.Bot):
 
     def __init__(
         self,
-        # *,
         session: ClientSession,
         pool: db.PoolTypedWithAny,
-        # steam_web_api: str,
-        # stratz_bearer: str,
     ) -> None:
-
         self.started: bool = False
         self.session: ClientSession = session
         self.pool: db.PoolTypedWithAny = pool
@@ -134,6 +130,9 @@ class Dota2Bot(BotBase, dota2.Bot):
         embed = discord.Embed(
             color=0xA32952,
             title=f"Event Error: `{event}`",
-            description=f"Event Args:\n{fmt.pformat_args(*args)}\n{fmt.pformat_mapping(kwargs)}"[4000:],
+            description=(
+                f"Event Args:\n{fmt.pformat_args(*args, limit=2000)}\n"
+                f"Event Kwargs:\n{fmt.pformat_mapping(kwargs, limit=1900)}"
+            ),
         ).set_footer(text=f"{self.__class__.__name__}.on_error: {event}")
         await self.error_notification_manager.register(error, embed)
