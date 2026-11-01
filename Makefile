@@ -27,6 +27,12 @@ ty:  # Run typechecker (ty)
 	uv run ty check .
 
 
+.PHONY: test
+.SILENT: test
+test:  # Run the tests
+	uv run pytest
+
+
 .PHONY: check
 .SILENT: check
 check:  # Run both typechecker and linter (simply calls "make ruff" and "make ty")

@@ -15,10 +15,20 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = ["asyncpg-stubs", "ty", "ruff"]
+dev = [
+    "asyncpg-stubs",
+    "pytest",
+    "ty",
+    "ruff",
+]
 
 [tool.uv.sources]
 steamio = { git = "https://github.com/Aluerie/steam.py", rev = "introduce-ext.dota2" }
+
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
 
 
 [tool.ty.rules]
@@ -101,6 +111,11 @@ flake8-quotes.inline-quotes = "double"
 ]
 "src/ext/*.py" = [
     "undocumented-param", # I don't want to document all the `ctx: IreContext`
+]
+"tests/*.py" = [
+    "hardcoded-password-string", # fake secrets
+    "private-member-access", # tests poke at internals on purpose
+    "unused-method-argument", # test doubles mirror the signatures they replace
 ]
 
 [tool.ruff.format]

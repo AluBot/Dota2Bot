@@ -48,6 +48,7 @@ make run
 ```sh
 make ruff     # linter and formatter check
 make ty       # type checker
+make test     # tests
 make check    # both
 make update   # upgrade the dependencies
 ```
