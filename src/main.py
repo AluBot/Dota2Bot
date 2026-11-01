@@ -40,7 +40,7 @@ async def start_the_bot() -> None:
     ):
         web_app = MyFastAPI(bot)
         web_app.include_router(router)
-        config = uvicorn.Config(web_app, host=LOCAL_API_HOST, port=LOCAL_API_PORT, log_config=None)
+        config = uvicorn.Config(web_app, host=LOCAL_API_HOST, port=LOCAL_API_PORT, log_config=None, access_log=False)
         server = uvicorn.Server(config)
         async with asyncio.TaskGroup() as group:
             group.create_task(bot.login())
@@ -52,6 +52,7 @@ def launch() -> None:
     with logs.setup_logging(
         starting_up_art=ASCII_STARTING_UP_ART,
         filename="d2b.log",
+        level=env.LOG_LEVEL,
     ):
         try:
             asyncio.run(start_the_bot())

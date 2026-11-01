@@ -32,6 +32,11 @@ The API listens on `127.0.0.1:8000` only, and every request has to carry the sha
 Put the same `LOCAL_API_KEY` into the `.env` of this bot and of every bot that calls it
 (`shared.apis.local.LocalAPI` sends it).
 
+## Logging
+
+Logs go to the console and to `.temp/d2b.log` (rotated). Set `LOG_LEVEL=DEBUG` in `.env` to see the debug logs.
+The local API doesn't log every request, but it does log the ones rejected for a wrong `X-API-Key`.
+
 ## Setup
 
 Requires Python 3.14 and [uv](https://docs.astral.sh/uv/).

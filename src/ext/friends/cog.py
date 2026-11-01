@@ -53,6 +53,11 @@ MATCHES_KEPT_PER_FRIEND = 20
 PENDING_INVITE_TTL = dt.timedelta(minutes=10)
 
 
+def deleted_count(status: str) -> int:
+    """Get the amount of deleted rows from the status of a ``DELETE`` query, e.g. ``"DELETE 3"`` is 3."""
+    return int(status.rsplit(" ", 1)[-1])
+
+
 class FriendsCog(commands.Cog[Dota2Bot]):
     """Component with all 9kmmrbot-like Dota 2 features.
 
@@ -132,7 +137,7 @@ class FriendsCog(commands.Cog[Dota2Bot]):
 
         # From now on `on_user_update` handles changes, so none get lost while the initial analysis is running.
         self.bot.friend_index_ready.set()
-        log.debug("Friends index ready.")
+        log.info("Indexed %d friends of the bot.", len(self.bot.friends_index))
 
         for friend in list(self.bot.friends_index.values()):
             try:
@@ -306,6 +311,7 @@ class FriendsCog(commands.Cog[Dota2Bot]):
 
         Useful to keep W-L as precise as possible. Also the only source of the ``abandon`` flag.
         """
+        log.debug("Syncing match history of %d friends.", len(self.bot.friends_index))
         for friend in list(self.bot.friends_index.values()):
             await self._sync_history(friend)
 
@@ -363,19 +369,21 @@ class FriendsCog(commands.Cog[Dota2Bot]):
         Matches that are still live or pending are not removed, unless the bot has given up on their outcome long ago.
         Matches that started more than 8 hours ago are forgotten by the in-memory indexes.
         """
-        log.debug("Removing way too old matches.")
-        await self.bot.pool.execute(
+        old = await self.bot.pool.execute(
             queries.DELETE_MATCHES_BEYOND_KEPT_LIMIT, MatchState.Completed, MATCHES_KEPT_PER_FRIEND
         )
-        await self.bot.pool.execute(
+        stale = await self.bot.pool.execute(
             queries.DELETE_STALE_LIVE_MATCHES, MatchState.Live, clock.utcnow() - LIVE_MATCH_MAX_AGE
         )
-        await self.bot.pool.execute(
+        abandoned = await self.bot.pool.execute(
             queries.DELETE_ABANDONED_PENDING_MATCHES,
             MatchState.Pending,
             MAX_FAILED_LOOKUPS,
             clock.utcnow() - MATCH_HISTORY_MAX_AGE,
         )
+        counts = [deleted_count(status) for status in (old, stale, abandoned)]
+        if any(counts):
+            log.info("Removed %d old, %d stale live and %d abandoned pending matches.", *counts)
 
         cut_off = clock.utcnow() - LIVE_MATCH_MAX_AGE
         for index in (self.play_matches, self.spectate_matches):

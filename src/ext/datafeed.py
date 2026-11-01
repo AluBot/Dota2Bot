@@ -56,7 +56,7 @@ class DatafeedCog(commands.Cog[Dota2Bot]):
                 DO UPDATE SET display_name = $2;
         """
         await self.bot.pool.executemany(query, to_insert)
-        log.debug("🍋 Database Dota Constants: Updated items with %s API", service_name)
+        log.info("🍋 Database Dota Constants: Updated %d items with %s API", len(to_insert), service_name)
 
     async def _refresh_items(self) -> None:
         """Download the item list and save it into the database."""

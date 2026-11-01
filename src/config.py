@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 __all__ = ("env",)
@@ -30,6 +32,7 @@ class Env(EnvConfig):
     WEBHOOK_NOTIFICATION: str
     WEBHOOK_LOGGER: str
     LOCAL_API_KEY: str
+    LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
 
 env = Env()
