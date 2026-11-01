@@ -29,6 +29,7 @@ class Env(EnvConfig):
     WEBHOOK_ERROR: str
     WEBHOOK_NOTIFICATION: str
     WEBHOOK_LOGGER: str
+    LOCAL_API_KEY: str
 
 
 env = Env()

@@ -5,11 +5,14 @@
 from __future__ import annotations
 
 import contextlib
+import secrets
 from typing import TYPE_CHECKING, Annotated, cast
 
 import steam
-from fastapi import APIRouter, HTTPException, Path, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Security, status
+from fastapi.security import APIKeyHeader
 
+from config import env
 from core import PendingInvite
 from ext.friends.models import rank_display_name
 from shared import clock
@@ -24,7 +27,17 @@ if TYPE_CHECKING:
     from core import Dota2Bot
 
 
-router = APIRouter()
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+
+def require_api_key(api_key: Annotated[str | None, Security(api_key_header)]) -> None:
+    """Reject requests that don't carry the shared secret of the local API."""
+    # `compare_digest` takes bytes here, because it only accepts ASCII strings
+    if api_key is None or not secrets.compare_digest(api_key.encode(), env.LOCAL_API_KEY.encode()):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or missing API key")
+
+
+router = APIRouter(dependencies=[Depends(require_api_key)])
 
 
 ########################################################################################################################
@@ -267,7 +280,7 @@ async def steam_user_convert(argument: str, request: Request) -> schemas.SteamUs
     }
 
 
-@router.get(path="/accept_invite/")
+@router.post(path="/accept_invite/")
 async def accept_invite(friend_id: int, twitch_id: str, request: Request) -> schemas.SteamUser:
     """Allow the bot to accept a friend invite from this Steam user for the next few minutes."""
     bot = get_bot(request)

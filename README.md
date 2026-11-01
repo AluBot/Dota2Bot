@@ -7,7 +7,7 @@ for a Twitch bot.
 
 ## How it works
 
-* A streamer registers on the website, which calls `/accept_invite/`; then they send a friend invite to the bot,
+* A streamer registers on the website, which calls `POST /accept_invite/`; then they send a friend invite to the bot,
   and the bot accepts it only for the next 10 minutes.
 * Rich Presence updates of the friends are classified into activities: playing, spectating, in the menu, unsupported.
 * Playing and spectating matches are polled until all players and heroes are known. Playing matches are saved into
@@ -25,6 +25,12 @@ for a Twitch bot.
 | `src/ext/datafeed.py` | Daily refresh of the Dota 2 items in the database |
 | `src/shared/` | Git submodule with the code shared with other bots |
 | `sql/` | Database schema |
+
+## Local API
+
+The API listens on `127.0.0.1:8000` only, and every request has to carry the shared secret in the `X-API-Key` header.
+Put the same `LOCAL_API_KEY` into the `.env` of this bot and of every bot that calls it
+(`shared.apis.local.LocalAPI` sends it).
 
 ## Setup
 
