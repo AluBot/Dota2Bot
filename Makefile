@@ -41,3 +41,9 @@ check:  # Run both typechecker and linter (simply calls "make ruff" and "make ty
 update:  # Update dependencies
 	uv lock --upgrade
 	uv sync
+
+
+.PHONY: scp
+.SILENT: scp
+scp:  # Copy required files into the VPS
+	scp -i "${SSH_PRIVATE_KEY}" .env ${SSH_USERNAME}@${SSH_HOST}:~/Dota2Bot/.env
