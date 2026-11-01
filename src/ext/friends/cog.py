@@ -114,7 +114,7 @@ class FriendsCog(commands.Cog[Dota2Bot]):
             friend = self.bot.friends_index[steam_friend.id] = Friend(steam_friend._user)  # ruff: ignore[private-member-access]  # ty: ignore[invalid-argument-type]
         return friend
 
-    @tasks.loop(count=1)
+    @tasks.loop(count=1, wait_for_ready=True)
     async def fill_friends(self) -> None:
         """Index bot's friend list and analyze their rich presences."""
         log.debug("Indexing bot's friend list.")
@@ -391,7 +391,7 @@ class FriendsCog(commands.Cog[Dota2Bot]):
 
     @fill_friends.before_loop
     async def wait_for_clients(self) -> None:
-        """Wait for all the needed clients to get ready.
+        """Wait for the Dota 2 Game Coordinator (the bot itself is awaited by ``wait_for_ready``).
 
         Otherwise, such things as Dota 2 Coordinator requests are going to error out.
         Unfortunately, specifically, Dota 2 Coordinator usually takes ~30 seconds to get ready.
@@ -399,7 +399,6 @@ class FriendsCog(commands.Cog[Dota2Bot]):
         Also a crutch for the infamous Tuesday Steam maintenance problems: when steam crashes the bot never
         properly reconnects or restarts on its own, so if the Coordinator is not ready in time - restart the bot.
         """
-        await self.bot.wait_until_ready()
         try:
             async with asyncio.timeout(GC_READY_TIMEOUT):
                 await self.bot.wait_until_gc_ready()
