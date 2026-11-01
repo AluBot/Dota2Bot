@@ -176,15 +176,15 @@ class FriendsCog(commands.Cog[Dota2Bot]):
         If the bot detects a new game being played or watched - it will do necessary actions to
         prepare those matches for further inspection.
 
-        Warning
-        -------
-        The code in this function is also quite volatile. Valve are quite inconsistent in their Rich Presence data,
-        so the logic might break any day.
-
         Parameters
         ----------
         friend
             The friend whose Rich Presence has changed.
+
+        Warnings
+        --------
+        The code in this function is also quite volatile. Valve are quite inconsistent in their Rich Presence data,
+        so the logic might break any day.
         """
         if not friend.is_playing_dota():
             await self.conclude_match(friend)
