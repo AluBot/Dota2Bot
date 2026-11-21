@@ -27,6 +27,7 @@ __all__ = (
 )
 
 DOTA_APP_ID = 570
+HIDDEN_PROFILE_RANK = "Hidden profile"
 
 
 def rank_display_name(profile_card: dota2.ProfileCard) -> str:
@@ -81,7 +82,7 @@ class Player:
     Attributes
     ----------
     id
-        Steam account id.
+        Steam account id. Players with hidden profiles all get the same placeholder id.
     player_slot
         Position of the player in the match's player order.
     lifetime_games
@@ -101,6 +102,27 @@ class Player:
     @override
     def __repr__(self) -> str:
         return f"<Player id={self.id} slot={self.player_slot}>"
+
+    @classmethod
+    def hidden(cls, account_id: int, player_slot: int, hero: Hero) -> Self:
+        """Create a player with a hidden profile: Steam doesn't tell who they are, so there is no profile card.
+
+        Parameters
+        ----------
+        account_id
+            The placeholder account id Steam gives to hidden profiles.
+        player_slot
+            Position of the player in the match's player order.
+        hero
+            Hero the player has selected so far.
+        """
+        return cls(
+            id=account_id,
+            player_slot=player_slot,
+            lifetime_games=0,
+            rank_display_name=HIDDEN_PROFILE_RANK,
+            hero=hero,
+        )
 
     @classmethod
     async def create(cls, bot: Dota2Bot, account_id: int, player_slot: int, hero: Hero) -> Self:

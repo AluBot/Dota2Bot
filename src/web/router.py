@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import contextlib
-import logging
 import secrets
 from typing import TYPE_CHECKING, Annotated, cast
 
@@ -15,8 +14,10 @@ from fastapi.security import APIKeyHeader
 
 from config import env
 from core import PendingInvite
+from ext.friends import queries
 from ext.friends.models import rank_display_name
 from shared import clock
+from shared.concepts import prefixed_logger
 from shared.typings import local as schemas  # ruff: ignore[typing-only-first-party-import]
 from utils import const
 
@@ -28,7 +29,8 @@ if TYPE_CHECKING:
     from core import Dota2Bot
 
 
-log = logging.getLogger(__name__)
+log = prefixed_logger("🌐")
+
 
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
@@ -38,7 +40,7 @@ def require_api_key(request: Request, api_key: Annotated[str | None, Security(ap
     # `compare_digest` takes bytes here, because it only accepts ASCII strings
     if api_key is None or not secrets.compare_digest(api_key.encode(), env.LOCAL_API_KEY.encode()):
         client = request.client.host if request.client else "unknown client"
-        log.warning("Rejected %s %s from %s: invalid or missing API key", request.method, request.url.path, client)
+        log.warning("Rejected {} {} from {}: invalid or missing API key", request.method, request.url.path, client)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or missing API key")
 
 
@@ -289,6 +291,12 @@ async def steam_user_convert(argument: str, request: Request) -> schemas.SteamUs
 async def accept_invite(friend_id: int, twitch_id: str, request: Request) -> schemas.SteamUser:
     """Allow the bot to accept a friend invite from this Steam user for the next few minutes."""
     bot = get_bot(request)
+    # checked now, otherwise saving the account fails only once the friend is added
+    if not await bot.pool.fetchval(queries.SELECT_TWITCH_ACCOUNT_EXISTS, twitch_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="I don't know such a Twitch account",
+        )
     user = await fetch_user_by_friend_id(bot, friend_id)
     bot.pending_invites[user.id] = PendingInvite(clock.utcnow(), twitch_id)
     return {

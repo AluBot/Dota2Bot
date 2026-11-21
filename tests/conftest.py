@@ -8,6 +8,13 @@ The app reads its secrets at import time, so tests give it fake ones before anyt
 from __future__ import annotations
 
 import os
+from typing import TYPE_CHECKING
+
+import pytest
+from loguru import logger
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
 
 FAKE_ENV = {
     "PROJECT_NAME": "Dota2Bot",
@@ -25,3 +32,11 @@ FAKE_ENV = {
 }
 # not `setdefault`: a real `.env` or environment must never leak into the tests
 os.environ.update(FAKE_ENV)
+
+
+@pytest.fixture
+def caplog(caplog: pytest.LogCaptureFixture) -> Generator[pytest.LogCaptureFixture]:
+    """Make pytest's ``caplog`` see loguru records too (loguru doesn't go through the standard ``logging``)."""
+    handler_id = logger.add(caplog.handler, format="{message}", level=0)
+    yield caplog
+    logger.remove(handler_id)

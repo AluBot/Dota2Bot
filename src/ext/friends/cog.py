@@ -10,8 +10,8 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import inspect
-import logging
 import pprint
+import sys
 from typing import TYPE_CHECKING, override
 
 import steam
@@ -20,7 +20,7 @@ from steam.ext import commands
 from core import Dota2Bot
 from shared import clock
 from shared.apis.local import MatchState
-from shared.concepts import tasks
+from shared.concepts import prefixed_logger, tasks
 
 from . import queries
 from .matches import PlayingMatch, SpectatingMatch, TrackedMatch, UnsupportedMatch, get_or_create
@@ -42,7 +42,8 @@ if TYPE_CHECKING:
 
 __all__ = ("FriendsCog",)
 
-log = logging.getLogger(__name__)
+log = prefixed_logger("👥")
+
 
 GC_READY_TIMEOUT = 11 * 60  # seconds the Game Coordinator gets to get ready before the bot is restarted
 FRIEND_LIST_RETRY_DELAY = 30  # seconds before another attempt to get the bot's friend list
@@ -82,6 +83,8 @@ class FriendsCog(commands.Cog[Dota2Bot]):
         self.spectate_matches: dict[str, SpectatingMatch] = {}  # watching server -> match
 
         self._reported_statuses: set[str] = set()
+        # (friend id, match id) -> start time of match history entries that can't be saved
+        self._unstorable_history: dict[tuple[int, int], dt.datetime] = {}
 
         self.fill_friends.start()
         self.process_pending_matches.start()
@@ -127,7 +130,7 @@ class FriendsCog(commands.Cog[Dota2Bot]):
             try:
                 steam_friends = await self.bot.user.friends()
             except Exception:
-                log.exception("Failed to get the bot's friend list, retrying in %d seconds.", FRIEND_LIST_RETRY_DELAY)
+                log.exception("Failed to get the bot's friend list, retrying in {}s.", FRIEND_LIST_RETRY_DELAY)
                 await asyncio.sleep(FRIEND_LIST_RETRY_DELAY)
             else:
                 break
@@ -137,13 +140,13 @@ class FriendsCog(commands.Cog[Dota2Bot]):
 
         # From now on `on_user_update` handles changes, so none get lost while the initial analysis is running.
         self.bot.friend_index_ready.set()
-        log.info("Indexed %d friends of the bot.", len(self.bot.friends_index))
+        log.info("Indexed {} friends of the bot.", len(self.bot.friends_index))
 
         for friend in list(self.bot.friends_index.values()):
             try:
                 await self.analyze_rich_presence(friend)
             except Exception:
-                log.exception("Failed to analyze rich presence of %r", friend)
+                log.exception("Failed to analyze rich presence of {!r}", friend)
 
     @commands.Cog.listener()  # ty: ignore[invalid-argument-type]
     async def on_user_update(self, _: dota2.User, after: dota2.User) -> None:
@@ -168,7 +171,7 @@ class FriendsCog(commands.Cog[Dota2Bot]):
             return
 
         friend.rich_presence = rich_presence
-        log.debug("Recognized rich presence update for %r: %r", friend, rich_presence)
+        log.debug("Recognized rich presence update for {!r}: {!r}", friend, rich_presence)
         if self.bot.friend_index_ready.is_set():
             await self.analyze_rich_presence(friend)
         # otherwise ``fill_friends`` is going to analyze everyone once it's done
@@ -203,6 +206,8 @@ class FriendsCog(commands.Cog[Dota2Bot]):
             case PlayingPartialMatch(watchable_game_id=game_id):
                 live = get_or_create(self.play_matches, game_id, lambda: PlayingMatch(self.bot, game_id))
                 await self._attach(friend, live)
+                if live.state == MatchState.Pending:
+                    await self._resume_match(live, friend)
             case SpectatingPartialMatch(watching_server=server):
                 live = get_or_create(self.spectate_matches, server, lambda: SpectatingMatch(self.bot, server))
                 await self._attach(friend, live)
@@ -260,12 +265,22 @@ class FriendsCog(commands.Cog[Dota2Bot]):
 
         if isinstance(live, TrackedMatch) and live.state == MatchState.Starting:
             # The lobby terminated before heroes were picked.
-            log.info("%r: abandoned, the last friend %r left before the match data was complete", live, friend)
+            log.info("{!r}: abandoned, the last friend {!r} left before the match data was complete", live, friend)
             live.cancel()
         elif isinstance(live, PlayingMatch) and live.state == MatchState.Live:
-            log.info("%r: pending, the last friend %r left", live, friend)
+            log.info("{!r}: pending, the last friend {!r} left", live, friend)
             live.state = MatchState.Pending
             await self.bot.pool.execute(queries.UPDATE_MATCH_STATE, MatchState.Pending, live.id)
+
+    async def _resume_match(self, live: PlayingMatch, friend: Friend) -> None:
+        """Make a pending match live again, because a friend has come back into it, e.g. after a disconnect.
+
+        Otherwise the bot would keep looking up the outcome of a match that is still going,
+        and would run out of attempts before it ends.
+        """
+        log.info("{!r}: live again, the friend {!r} came back", live, friend)
+        live.state = MatchState.Live
+        await self.bot.pool.execute(queries.RESUME_MATCH, MatchState.Live, live.id)
 
     @tasks.loop(seconds=20)
     async def process_pending_matches(self) -> None:
@@ -273,6 +288,7 @@ class FriendsCog(commands.Cog[Dota2Bot]):
 
         Runs all the time: with no pending matches it's one cheap query every 20 seconds.
         That also picks up matches left pending by the previous run.
+        An exception would stop the loop for good, so it survives all of them, database errors included.
 
         Notes
         -----
@@ -281,27 +297,34 @@ class FriendsCog(commands.Cog[Dota2Bot]):
         * Another option is to use opendota api (stratz is too slow -
           they don't allow access to data until full parse is done)
         """
-        rows = await self.bot.pool.fetch(queries.SELECT_PENDING_MATCH_IDS, MatchState.Pending, MAX_FAILED_LOOKUPS)
+        try:
+            rows = await self.bot.pool.fetch(queries.SELECT_PENDING_MATCH_IDS, MatchState.Pending, MAX_FAILED_LOOKUPS)
+        except Exception:
+            log.exception("Failed to get the pending matches")
+            return
 
         for row in rows:
             match_id = row["match_id"]
             try:
-                # If friend disconnects before ancient falls (e.g., preemptive disconnects or
-                # when game is "Safe to leave") then ``.minimal`` won't give any results as the game
-                # is still live but friend's RP is different. This also happens if friend
-                # disconnects-reconnects in the middle of the match.
-                minimal = await self.bot.create_partial_match(match_id).minimal()
-            except ValueError:
-                # matches that failed too many times get ignored by the query above
-                await self.bot.pool.execute(queries.UPDATE_MATCH_FAILED, match_id)
-                continue
+                await self._look_up_outcome(match_id)
             except Exception:
-                # e.g. Game Coordinator timeouts. This loop never stops, so it must survive them.
-                log.exception("Failed to get the outcome of the match %s", match_id)
-                continue
+                # e.g. Game Coordinator timeouts or a database hiccup
+                log.exception("Failed to get the outcome of the match {}", match_id)
 
-            await self.bot.pool.execute(queries.UPDATE_MATCH_OUTCOME, minimal.outcome, match_id, MatchState.Completed)
-            log.info("Match %s is completed with the outcome %r", match_id, minimal.outcome)
+    async def _look_up_outcome(self, match_id: int) -> None:
+        """Save the outcome of a pending match, or count a failed attempt if it's not known yet."""
+        try:
+            # If friend disconnects before ancient falls (e.g., preemptive disconnects or
+            # when game is "Safe to leave") then ``.minimal`` won't give any results as the game
+            # is still live but friend's RP is different.
+            minimal = await self.bot.create_partial_match(match_id).minimal()
+        except ValueError:
+            # matches that failed too many times get ignored by `SELECT_PENDING_MATCH_IDS`
+            await self.bot.pool.execute(queries.UPDATE_MATCH_FAILED, match_id)
+            return
+
+        await self.bot.pool.execute(queries.UPDATE_MATCH_OUTCOME, minimal.outcome, match_id, MatchState.Completed)
+        log.info("Match {} is completed with the outcome {!r}", match_id, minimal.outcome)
 
     # --- match history and database care ---
 
@@ -311,7 +334,7 @@ class FriendsCog(commands.Cog[Dota2Bot]):
 
         Useful to keep W-L as precise as possible. Also the only source of the ``abandon`` flag.
         """
-        log.debug("Syncing match history of %d friends.", len(self.bot.friends_index))
+        log.debug("Syncing match history of {} friends.", len(self.bot.friends_index))
         for friend in list(self.bot.friends_index.values()):
             await self._sync_history(friend)
 
@@ -320,17 +343,19 @@ class FriendsCog(commands.Cog[Dota2Bot]):
         try:
             history = await friend.steam.match_history()
         except Exception:
-            log.exception("Failed to get match history of %r", friend)
+            log.exception("Failed to get match history of {!r}", friend)
             return
         for entry in history:
             try:
                 await self._store_history_match(entry, friend.steam.id)
             except Exception:
-                log.exception("Failed to store match %s of %r", entry.id, friend)
+                log.exception("Failed to store match {} of {!r}", entry.id, friend)
 
     async def _store_history_match(self, entry: dota2.MatchHistoryMatch, friend_id: int) -> None:
         """Save a match history entry of a friend, unless it is too old."""
         if entry.start_time < clock.utcnow() - MATCH_HISTORY_MAX_AGE:
+            return
+        if (friend_id, entry.id) in self._unstorable_history:
             return
 
         # Fast path: a match we already know as completed only needs its ``abandon`` flag refreshed,
@@ -345,8 +370,14 @@ class FriendsCog(commands.Cog[Dota2Bot]):
         minimal = await self.bot.create_partial_match(entry.id).minimal()
         player_slot = next((slot for slot, player in enumerate(minimal.players) if player.hero == entry.hero), None)
         if player_slot is None:
-            msg = f"Hero of match history match {entry.id} is not among the match players."
-            raise LookupError(msg)
+            # remembered, otherwise every hourly sync would ask for `.minimal()` and warn again
+            self._unstorable_history[friend_id, entry.id] = entry.start_time
+            log.warning(
+                "Hero of match {} from the match history of friend {} is not among the match players, skipping it.",
+                entry.id,
+                friend_id,
+            )
+            return
 
         await self.bot.pool.execute(
             queries.INSERT_HISTORY_MATCH,
@@ -368,7 +399,30 @@ class FriendsCog(commands.Cog[Dota2Bot]):
         Only the latest matches of each friend are kept in the database (together with all their players).
         Matches that are still live or pending are not removed, unless the bot has given up on their outcome long ago.
         Matches that started more than 8 hours ago are forgotten by the in-memory indexes.
+
+        An exception would stop the loop for good, so a database error only skips the database part this time.
         """
+        try:
+            await self._remove_old_database_matches()
+        except Exception:
+            log.exception("Failed to remove old matches from the database")
+
+        history_cut_off = clock.utcnow() - MATCH_HISTORY_MAX_AGE
+        for key in [key for key, start_time in self._unstorable_history.items() if start_time < history_cut_off]:
+            del self._unstorable_history[key]
+
+        cut_off = clock.utcnow() - LIVE_MATCH_MAX_AGE
+        for index in (self.play_matches, self.spectate_matches):
+            for key in [key for key, live in index.items() if live.started_at < cut_off]:
+                del index[key]
+
+        # invites that were never used would stay in memory forever otherwise
+        invite_cut_off = clock.utcnow() - PENDING_INVITE_TTL
+        for friend_id in [fid for fid, invite in self.bot.pending_invites.items() if invite.sent_at < invite_cut_off]:
+            del self.bot.pending_invites[friend_id]
+
+    async def _remove_old_database_matches(self) -> None:
+        """Delete the matches that are not worth keeping in the database anymore."""
         old = await self.bot.pool.execute(
             queries.DELETE_MATCHES_BEYOND_KEPT_LIMIT, MatchState.Completed, MATCHES_KEPT_PER_FRIEND
         )
@@ -383,17 +437,7 @@ class FriendsCog(commands.Cog[Dota2Bot]):
         )
         counts = [deleted_count(status) for status in (old, stale, abandoned)]
         if any(counts):
-            log.info("Removed %d old, %d stale live and %d abandoned pending matches.", *counts)
-
-        cut_off = clock.utcnow() - LIVE_MATCH_MAX_AGE
-        for index in (self.play_matches, self.spectate_matches):
-            for key in [key for key, live in index.items() if live.started_at < cut_off]:
-                del index[key]
-
-        # invites that were never used would stay in memory forever otherwise
-        invite_cut_off = clock.utcnow() - PENDING_INVITE_TTL
-        for friend_id in [fid for fid, invite in self.bot.pending_invites.items() if invite.sent_at < invite_cut_off]:
-            del self.bot.pending_invites[friend_id]
+            log.info("Removed {} old, {} stale live and {} abandoned pending matches.", *counts)
 
     # --- task care ---
 
@@ -405,19 +449,16 @@ class FriendsCog(commands.Cog[Dota2Bot]):
         Unfortunately, specifically, Dota 2 Coordinator usually takes ~30 seconds to get ready.
 
         Also a crutch for the infamous Tuesday Steam maintenance problems: when steam crashes the bot never
-        properly reconnects or restarts on its own, so if the Coordinator is not ready in time - restart the bot.
+        properly reconnects or restarts on its own, so if the Coordinator is not ready in time - exit,
+        and the service (``Restart=always``) starts the bot again, same as ``Dota2Bot.login`` does.
         """
         try:
             async with asyncio.timeout(GC_READY_TIMEOUT):
                 await self.bot.wait_until_gc_ready()
         except TimeoutError:
             log.critical("🔴 Failed to wait for Dota 2 Game Coordinator to get ready - restarting the bot. 🔴")
-            try:
-                process = await asyncio.create_subprocess_exec("sudo", "systemctl", "restart", "dota2bot")
-                await process.wait()
-            except OSError:
-                log.exception("Failed to restart the bot's process")
-            await self.bot.wait_until_gc_ready()
+            # `SystemExit` is not an `Exception`, so the task loop lets it through to the event loop
+            sys.exit(1)
 
     @double_check_gc_match_history.before_loop
     @remove_way_too_old_matches.before_loop
@@ -437,7 +478,7 @@ class FriendsCog(commands.Cog[Dota2Bot]):
         invite
             The invite the bot has received.
         """
-        log.info("Received invite: %r", invite)
+        log.info("Received invite: {!r}", invite)
         if not isinstance(invite, steam.UserInvite):
             method = getattr(invite, "decline", None)
             if inspect.iscoroutinefunction(method):
@@ -451,12 +492,12 @@ class FriendsCog(commands.Cog[Dota2Bot]):
     @commands.Cog.listener()  # ty: ignore[invalid-argument-type]
     async def on_invite_accept(self, invite: steam.Invite) -> None:
         """Log accepted invites."""
-        log.info("Accepted invite: %r", invite)
+        log.info("Accepted invite: {!r}", invite)
 
     @commands.Cog.listener()  # ty: ignore[invalid-argument-type]
     async def on_invite_decline(self, invite: steam.Invite) -> None:
         """Log declined invites."""
-        log.info("Declined invite: %r", invite)
+        log.info("Declined invite: {!r}", invite)
 
     @commands.Cog.listener()  # ty: ignore[invalid-argument-type]
     async def on_friend_add(self, steam_friend: steam.Friend) -> None:
@@ -467,15 +508,36 @@ class FriendsCog(commands.Cog[Dota2Bot]):
         steam_friend
             The user who has just become the bot's friend.
         """
-        log.info("Added friend %r", steam_friend)
+        log.info("Added friend {!r}", steam_friend)
         pending = self.bot.pending_invites.pop(steam_friend.id, None)
         if pending is None:
-            # ``twitch_id`` is NOT NULL, so there is no account to save for someone the website doesn't know
-            log.warning("Friend %r was added without a pending invite, not saving the account.", steam_friend)
+            # ``twitch_id`` is NOT NULL, so there is no account to save for someone the website doesn't know.
+            # The friend is still tracked, but their recorded matches get removed by the next database clean up.
+            log.warning("Friend {!r} was added without a pending invite, not saving the account.", steam_friend)
         else:
-            await self.bot.pool.execute(queries.INSERT_ACCOUNT, steam_friend.id, pending.twitch_id)
+            try:
+                await self.bot.pool.execute(queries.INSERT_ACCOUNT, steam_friend.id, pending.twitch_id)
+            except Exception:
+                # the friend is still worth tracking
+                log.exception("Failed to save the account of friend {!r}", steam_friend)
 
         friend = self._index_friend(steam_friend)
         await self.analyze_rich_presence(friend)
         await self.bot.wait_until_gc_ready()
         await self._sync_history(friend)
+
+    @commands.Cog.listener()  # ty: ignore[invalid-argument-type]
+    async def on_friend_remove(self, steam_friend: steam.Friend) -> None:
+        """Stop tracking someone who is not the bot's friend anymore.
+
+        Their account stays in the database: it's the website that links Twitch and Steam accounts.
+
+        Parameters
+        ----------
+        steam_friend
+            The user who has just stopped being the bot's friend.
+        """
+        log.info("Removed friend {!r}", steam_friend)
+        friend = self.bot.friends_index.pop(steam_friend.id, None)
+        if friend is not None:
+            await self.conclude_match(friend)

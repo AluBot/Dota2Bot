@@ -8,15 +8,14 @@ Keeps Dota 2 constants in the database up to date.
 from __future__ import annotations
 
 import datetime as dt
-import logging
 from typing import NamedTuple, override
 
 from steam.ext import commands
 
 from core import Dota2Bot
-from shared.concepts import loop
+from shared.concepts import loop, prefixed_logger
 
-log = logging.getLogger(__name__)
+log = prefixed_logger("📦")
 
 
 class ItemToUpsert(NamedTuple):
@@ -56,7 +55,7 @@ class DatafeedCog(commands.Cog[Dota2Bot]):
                 DO UPDATE SET display_name = $2;
         """
         await self.bot.pool.executemany(query, to_insert)
-        log.info("🍋 Database Dota Constants: Updated %d items with %s API", len(to_insert), service_name)
+        log.info("Database Dota Constants: Updated {} items with {} API", len(to_insert), service_name)
 
     async def _refresh_items(self) -> None:
         """Download the item list and save it into the database."""
@@ -73,7 +72,7 @@ class DatafeedCog(commands.Cog[Dota2Bot]):
         ``Dota2comClient`` already retries failed requests, so an exception that gets here is serious:
         the loop stops and the developers get notified.
         """
-        log.debug("🍋 Database Dota Constants: Refreshing `dota_constants_items`")
+        log.debug("Database Dota Constants: Refreshing `dota_constants_items`")
         await self._refresh_items()
 
     @refresh_dota_constants_items.before_loop
@@ -82,7 +81,7 @@ class DatafeedCog(commands.Cog[Dota2Bot]):
         try:
             if await self.bot.pool.fetchval("SELECT EXISTS (SELECT 1 FROM dota_constants_items);"):
                 return
-            log.info("🍋 Database Dota Constants: `dota_constants_items` is empty, filling it right away.")
+            log.info("Database Dota Constants: `dota_constants_items` is empty, filling it right away.")
             await self._refresh_items()
         except Exception:
             # not worth stopping the daily refresh for

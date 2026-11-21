@@ -32,7 +32,8 @@ class Env(EnvConfig):
     WEBHOOK_NOTIFICATION: str
     WEBHOOK_LOGGER: str
     LOCAL_API_KEY: str
-    LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    # loguru level names
+    LOG_LEVEL: Literal["TRACE", "DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
 
 env = Env()

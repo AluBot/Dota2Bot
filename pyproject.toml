@@ -1,17 +1,24 @@
 [project]
 name = "Dota2Bot"
 version = "0.1.0"
-description = "Add your description here"
+description = "Steam bot that follows streamers through its friend list and reports what they are doing in Dota 2"
 readme = "README.md"
 requires-python = ">=3.14"
+# The runtime dependencies of `src/shared` have to be here too, see its `pyproject.toml`.
 dependencies = [
     "aiohttp",
     "asyncpg",
+    "click>=8.5.0",
     "discord-py[speed]",
     "fastapi[standard-no-fastapi-cloud-cli]",
+    "loguru>=0.8.0",
+    "lru-dict>=1.4.1",
     "orjson",
     "pydantic-settings",
+    "pygit2>=1.21.0",
+    "python-dateutil>=2.9.0.post0",
     "steamio",
+    "uvloop>=0.23.0 ; sys_platform == 'linux'",
 ]
 
 [dependency-groups]
@@ -31,6 +38,9 @@ pythonpath = ["src"]
 testpaths = ["tests"]
 
 
+[tool.ty.src]
+exclude = ["src/shared/tests"] # the submodule's own tests run in its own CI
+
 [tool.ty.rules]
 all = "error"
 dynamic-function-decorator-return = "ignore"
@@ -44,7 +54,7 @@ unsound-yield = "ignore"
 line-length = 120
 target-version = "py314"
 preview = true
-exclude = [".venv"]
+exclude = [".venv", "src/shared/tests"] # the submodule's own tests run in its own CI
 src = ["src"]
 
 
@@ -95,8 +105,13 @@ ignore = [
     "non-empty-init-module",
     "undefined-local-with-import-star",
     "undefined-local-with-import-star-usage",
+    # Loguru formats messages with `{}`, these rules expect the `%` style of the standard `logging`
+    "logging-too-few-args",
+    "logging-too-many-args",
 ]
 unfixable = []
+# `logger.exception` of loguru counts as handling the exception, e.g. for `blind-except`
+logger-objects = ["loguru.logger"]
 flake8-quotes.inline-quotes = "double"
 
 [tool.ruff.lint.per-file-ignores]
@@ -116,13 +131,14 @@ flake8-quotes.inline-quotes = "double"
     "hardcoded-password-string", # fake secrets
     "private-member-access", # tests poke at internals on purpose
     "unused-method-argument", # test doubles mirror the signatures they replace
+    "unused-async", # test doubles of async functions have to be async
 ]
 
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
 skip-magic-trailing-comma = false
-line-ending = "auto"
+line-ending = "lf"
 
 [tool.ruff.lint.isort]
 split-on-trailing-comma = true

@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING
 
 import discord
@@ -12,12 +11,14 @@ from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 
 from shared import clock
+from shared.concepts import prefixed_logger
 from shared.globs import TwitchEmote
 
 if TYPE_CHECKING:
     from core import Dota2Bot
 
-log = logging.getLogger(__name__)
+
+log = prefixed_logger("🌐")
 
 
 class MyFastAPI(FastAPI):

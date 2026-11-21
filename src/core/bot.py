@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import platform
 import sys
 from typing import TYPE_CHECKING, Any, NamedTuple, override
@@ -19,6 +18,7 @@ from config import env
 from shared import fmt
 from shared.apis.dota2com import Dota2comClient
 from shared.apis.steam_web import SteamWebAPIClient
+from shared.concepts import prefixed_logger
 from shared.concepts.base_bot import BotBase
 
 if TYPE_CHECKING:
@@ -29,7 +29,9 @@ if TYPE_CHECKING:
     from ext.friends.models import Friend
     from shared.concepts import db
 
-log = logging.getLogger(__name__)
+
+log = prefixed_logger("🤖")
+
 
 __all__ = (
     "Dota2Bot",
@@ -126,9 +128,9 @@ class Dota2Bot(BotBase, dota2.Bot):
 
     @override
     async def on_ready(self) -> None:
-        log.info("🍋 Dota 2 Bot: Ready %s, now waiting till Game Coordinator is ready;", self.user.name)
+        log.info("Dota 2 Bot: Ready {}, now waiting till Game Coordinator is ready;", self.user.name)
         await self.wait_until_gc_ready()
-        log.info("🍋 Dota 2 Game Coordinator: Ready")
+        log.info("Dota 2 Game Coordinator: Ready")
 
     @override
     async def on_error(self, event: str, error: Exception, *args: Any, **kwargs: Any) -> None:

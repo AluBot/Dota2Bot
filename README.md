@@ -8,10 +8,14 @@ for a Twitch bot.
 ## How it works
 
 * A streamer registers on the website, which calls `POST /accept_invite/`; then they send a friend invite to the bot,
-  and the bot accepts it only for the next 10 minutes.
+  and the bot accepts it only for the next 10 minutes. The Twitch account has to exist in `irenesbot.tokens`.
+  Someone who becomes the bot's friend in any other way is tracked, but has no account row,
+  so their matches are removed from the database by the next clean up.
+* Someone who removes the bot from their friend list stops being tracked; their account row stays.
 * Rich Presence updates of the friends are classified into activities: playing, spectating, in the menu, unsupported.
 * Playing and spectating matches are polled until all players and heroes are known. Playing matches are saved into
   the database together with all their players, and the outcome is looked up after the friend leaves the match.
+  A friend who comes back into the match (e.g. after a disconnect) makes it live again.
 * An hourly sync with the friends' match history fills what the bot has missed and adds the `abandon` flag.
 
 ## Layout
@@ -34,7 +38,10 @@ Put the same `LOCAL_API_KEY` into the `.env` of this bot and of every bot that c
 
 ## Logging
 
-Logs go to the console and to `.temp/d2b.log` (rotated). Set `LOG_LEVEL=DEBUG` in `.env` to see the debug logs.
+The bot logs with [loguru](https://github.com/Delgan/loguru) (messages use `{}` placeholders, not `%s`).
+The libraries' standard `logging` records are routed into loguru too, see `shared.concepts.logs`.
+Logs go to the console and to `.temp/d2b.log` (rotated). Set `LOG_LEVEL=DEBUG` in `.env` to see the debug logs
+(any loguru level works, e.g. `TRACE`).
 The local API doesn't log every request, but it does log the ones rejected for a wrong `X-API-Key`.
 
 ## Setup

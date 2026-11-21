@@ -1,0 +1,2 @@
+# Normalize all text files to LF, both in the repository and in the working tree, on every OS.
+* text=auto eol=lf

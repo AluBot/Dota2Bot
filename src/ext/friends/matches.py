@@ -8,7 +8,6 @@ What the friends are doing in Dota 2 matches and the code that collects the data
 from __future__ import annotations
 
 import asyncio
-import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, override
@@ -18,6 +17,7 @@ from steam.ext import dota2
 
 from shared import clock
 from shared.apis.local import MatchState
+from shared.concepts import prefixed_logger
 
 from . import queries
 from .models import Player
@@ -42,7 +42,9 @@ __all__ = (
     "get_or_create",
 )
 
-log = logging.getLogger(__name__)
+
+log = prefixed_logger("🎮")
+
 
 POLL_INTERVAL = 10.1  # seconds between attempts to get live match data
 POLL_ATTEMPTS = 30  # attempts before giving up on a live match
@@ -79,6 +81,7 @@ class LiveMatch:
         self.average_mmr: int | None = None
         self.started_at: dt.datetime = clock.utcnow()
 
+        # by player slot: players with hidden profiles all share the same account id, so it can't be the key
         self.players: dict[int, Player] = {}
         self.friends: set[Friend] = set()
         self.state: MatchState = MatchState.Starting
@@ -194,20 +197,20 @@ class TrackedMatch(LiveMatch, ABC):
                 await asyncio.sleep(POLL_INTERVAL)
             try:
                 await self._apply(await self.fetch_snapshot())
-            except Exception:
-                log.debug("%r: attempt %d/%d failed", self, attempt + 1, POLL_ATTEMPTS, exc_info=True)
+            except Exception:  # ruff: ignore[blind-except] # logged, ruff doesn't recognize loguru's `opt`
+                log.opt(exception=True).debug("{!r}: attempt {}/{} failed", self, attempt + 1, POLL_ATTEMPTS)
                 continue
             if self._is_ready():
                 self.state = MatchState.Live
                 try:
                     await self.on_live()
                 except Exception:
-                    log.exception("%r: on_live failed", self)
+                    log.exception("{!r}: on_live failed", self)
                 self.ready.set()
-                log.info("%r is live with %d players", self, len(self.players))
+                log.info("{!r} is live with {} players", self, len(self.players))
                 return
 
-        log.warning("%r: gave up getting the match data after %d attempts", self, POLL_ATTEMPTS)
+        log.warning("{!r}: gave up getting the match data after {} attempts", self, POLL_ATTEMPTS)
         self.state = MatchState.GaveUp
 
     async def _apply(self, snapshot: MatchSnapshot) -> None:
@@ -219,15 +222,21 @@ class TrackedMatch(LiveMatch, ABC):
         self.average_mmr = snapshot.average_mmr
 
         # Heroes get picked over time, so known players only get their hero refreshed.
-        # Only the new players need their profile cards fetched.
+        # Only the new players need their profile cards fetched, and hidden profiles have none to fetch.
+        players: dict[int, Player] = {}
         new_players: dict[int, asyncio.Task[Player]] = {}
         async with asyncio.TaskGroup() as group:
             for slot, (account_id, hero) in enumerate(snapshot.players):
-                if (player := self.players.get(account_id)) is not None:
+                player = self.players.get(slot)
+                if player is not None and player.id == account_id:
                     player.hero = hero
+                    players[slot] = player
+                elif account_id in ANONYMOUS_ACCOUNT_IDS:
+                    players[slot] = Player.hidden(account_id, slot, hero)
                 else:
-                    new_players[account_id] = group.create_task(Player.create(self.bot, account_id, slot, hero))
-        self.players.update({account_id: task.result() for account_id, task in new_players.items()})
+                    new_players[slot] = group.create_task(Player.create(self.bot, account_id, slot, hero))
+        players.update({slot: task.result() for slot, task in new_players.items()})
+        self.players = dict(sorted(players.items()))
 
 
 class SpectatingMatch(TrackedMatch):
@@ -308,10 +317,14 @@ class PlayingMatch(TrackedMatch):
         ]
         async with self.bot.pool.acquire() as connection, connection.transaction():
             # `self.state` instead of `MatchState.Live`: the last friend might have left already, i.e. it's pending
+            saved_state = self.state
             await connection.execute(
-                queries.INSERT_MATCH, self.id, self.started_at, self.lobby_type, self.game_mode, self.state
+                queries.INSERT_MATCH, self.id, self.started_at, self.lobby_type, self.game_mode, saved_state
             )
             await connection.executemany(queries.INSERT_MATCH_PLAYER, player_rows)
+        if self.state != saved_state:
+            # The last friend left while the row wasn't committed yet, so the cog's state update didn't find it.
+            await self.bot.pool.execute(queries.UPDATE_MATCH_STATE, self.state, self.id)
 
 
 def get_or_create[T: LiveMatch](index: dict[str, T], key: str, factory: Callable[[], T]) -> T:

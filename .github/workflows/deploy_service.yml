@@ -6,7 +6,27 @@ on:
       - "main"
 
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: astral-sh/setup-uv@v6
+      - name: Install dependencies
+        run: uv sync
+      - name: Lint
+        run: |
+          uv run ruff check
+          uv run ruff format --check
+      - name: Typecheck
+        run: uv run ty check .
+      - name: Test
+        run: uv run pytest
+
   deploy:
+    # a broken commit must not reach the server
+    needs: check
     runs-on: ubuntu-latest
     steps:
       - name: Restarting the bot

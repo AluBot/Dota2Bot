@@ -92,6 +92,10 @@ class TestClassify:
         raw = {"status": "#DOTA_RP_SPECTATING", "watching_server": "[A:1:2:3]"}
         assert classify_raw(raw) == SpectatingPartialMatch("[A:1:2:3]")
 
+    def test_spectating_unrecognizable_server(self) -> None:
+        raw = {"status": "#DOTA_RP_SPECTATING", "watching_server": "garbage"}
+        assert classify_raw(raw) == UnsupportedPartialMatch("I can't recognize the server of the spectated match")
+
     def test_watching_replay(self) -> None:
         assert classify_raw({"status": "#DOTA_RP_SPECTATING"}) == UnsupportedPartialMatch(
             "Watching replays is not supported"

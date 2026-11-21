@@ -286,6 +286,9 @@ def classify(rp: RichPresence) -> Activity:
         if watching_server is None:
             # I think this happens only for watching replays
             return UnsupportedPartialMatch("Watching replays is not supported")
+        if steam.ID.from_id3(watching_server) is None:
+            # the Steam Web API needs the server's id64, which this can't be turned into
+            return UnsupportedPartialMatch("I can't recognize the server of the spectated match")
         return SpectatingPartialMatch(watching_server)
     if status == Status.NoStatus:
         # usually this happens in exact moment when the player closes Dota

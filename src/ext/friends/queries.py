@@ -21,7 +21,9 @@ __all__ = (
     "INSERT_HISTORY_PLAYER",
     "INSERT_MATCH",
     "INSERT_MATCH_PLAYER",
+    "RESUME_MATCH",
     "SELECT_PENDING_MATCH_IDS",
+    "SELECT_TWITCH_ACCOUNT_EXISTS",
     "UPDATE_ACCOUNT_LAST_SEEN",
     "UPDATE_HISTORY_ABANDON",
     "UPDATE_MATCH_FAILED",
@@ -31,6 +33,8 @@ __all__ = (
 
 INSERT_ACCOUNT = "INSERT INTO dota_accounts (friend_id, twitch_id) VALUES ($1, $2) ON CONFLICT (friend_id) DO NOTHING;"
 UPDATE_ACCOUNT_LAST_SEEN = "UPDATE dota_accounts SET last_seen = $1 WHERE friend_id = $2;"
+# `dota_accounts.twitch_id` references this table.
+SELECT_TWITCH_ACCOUNT_EXISTS = "SELECT EXISTS (SELECT 1 FROM irenesbot.tokens WHERE user_id = $1);"
 
 INSERT_MATCH = """
     INSERT INTO dota_matches
@@ -45,6 +49,8 @@ INSERT_MATCH_PLAYER = """
     ON CONFLICT (friend_id, match_id) DO NOTHING;
 """
 UPDATE_MATCH_STATE = "UPDATE dota_matches SET live = $1 WHERE match_id = $2;"
+# A friend came back into a pending match (e.g. reconnected): the lookups made while it was still going don't count.
+RESUME_MATCH = "UPDATE dota_matches SET live = $1, failed = 0 WHERE match_id = $2 AND outcome IS NULL;"
 
 SELECT_PENDING_MATCH_IDS = "SELECT match_id FROM dota_matches WHERE outcome IS NULL AND live = $1 AND failed < $2;"
 UPDATE_MATCH_FAILED = "UPDATE dota_matches SET failed = failed + 1 WHERE match_id = $1;"

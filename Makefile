@@ -1,4 +1,5 @@
-include .env
+# `-include`: a fresh clone has no `.env` yet, which only `make scp` needs
+-include .env
 
 # Otherwise `make scp` doesn't work, idk.
 ifeq ($(OS),Windows_NT)
@@ -17,8 +18,8 @@ run:
 .PHONY: ruff
 .SILENT: ruff
 ruff:  # Run the Ruff's linter 
-	uv run ruff check $(sources)
-	uv run ruff format --check $(sources)
+	uv run ruff check
+	uv run ruff format --check
 
 
 .PHONY: ty
