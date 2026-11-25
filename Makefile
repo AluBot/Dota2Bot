@@ -7,7 +7,12 @@ ifeq ($(OS),Windows_NT)
 else
     SHELL := pwsh
 endif
-.SHELLFLAGS := -NoProfile -Command 
+.SHELLFLAGS := -NoProfile -Command
+
+# SSH destination of the VPS: a `Host` alias from ~/.ssh/config or user@host.
+# Override it per command, e.g. make logs VPS=ubuntu@1.2.3.4, or with a VPS environment variable.
+VPS ?= vps
+
 
 .PHONY: run
 .SILENT: run
@@ -17,7 +22,7 @@ run:
 
 .PHONY: ruff
 .SILENT: ruff
-ruff:  # Run the Ruff's linter 
+ruff:  # Run the Ruff's linter
 	uv run ruff check
 	uv run ruff format --check
 
@@ -53,4 +58,4 @@ update:  # Update dependencies
 .PHONY: scp
 .SILENT: scp
 scp:  # Copy required files into the VPS
-	scp -i "${SSH_PRIVATE_KEY}" .env ${SSH_USERNAME}@${SSH_HOST}:~/Dota2Bot/.env
+	scp .env $(VPS):~/Dota2Bot/.env
