@@ -1827,7 +1827,7 @@ wheels = [
 [[package]]
 name = "steamio"
 version = "1.2.0"
-source = { git = "https://github.com/Aluerie/steam.py?rev=main#6353d23574dab049d07a6729301be6ad48b51722" }
+source = { git = "https://github.com/Aluerie/steam.py?rev=main#1e4c48c0943ab4c9a230e7d7b40262ee946b434d" }
 dependencies = [
     { name = "aiohttp" },
     { name = "beautifulsoup4" },
