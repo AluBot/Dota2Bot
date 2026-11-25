@@ -28,6 +28,7 @@ __all__ = (
 
 DOTA_APP_ID = 570
 HIDDEN_PROFILE_RANK = "Hidden profile"
+UNKNOWN_PROFILE_RANK = "Unknown"
 
 
 def rank_display_name(profile_card: dota2.ProfileCard) -> str:
@@ -91,6 +92,8 @@ class Player:
         Human-readable rank medal.
     hero
         Selected hero. Not truthy until the hero is picked.
+    profile_unknown
+        Whether the profile card couldn't be fetched, so the player is shown without one for now.
     """
 
     id: int
@@ -98,6 +101,7 @@ class Player:
     lifetime_games: int
     rank_display_name: str
     hero: Hero
+    profile_unknown: bool = False
 
     @override
     def __repr__(self) -> str:
@@ -122,6 +126,28 @@ class Player:
             lifetime_games=0,
             rank_display_name=HIDDEN_PROFILE_RANK,
             hero=hero,
+        )
+
+    @classmethod
+    def unknown(cls, account_id: int, player_slot: int, hero: Hero) -> Self:
+        """Create a player whose profile card couldn't be fetched, e.g. the Game Coordinator didn't answer.
+
+        Parameters
+        ----------
+        account_id
+            Steam account id of the player.
+        player_slot
+            Position of the player in the match's player order.
+        hero
+            Hero the player has selected so far.
+        """
+        return cls(
+            id=account_id,
+            player_slot=player_slot,
+            lifetime_games=0,
+            rank_display_name=UNKNOWN_PROFILE_RANK,
+            hero=hero,
+            profile_unknown=True,
         )
 
     @classmethod

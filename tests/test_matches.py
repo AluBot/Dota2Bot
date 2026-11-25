@@ -143,6 +143,32 @@ class TestApplySnapshot:
         assert [p.hero for p in match.players.values()] == ["a", "b"]
         assert profile_cards == [10]
 
+    def test_silent_profile_card_shows_unknown_and_is_retried(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        requested: list[int] = []
+
+        async def create(_: Any, account_id: int, player_slot: int, hero: Any) -> Player:
+            requested.append(account_id)
+            if account_id == 11 and requested.count(11) == 1:
+                raise TimeoutError
+            return Player(account_id, player_slot, 100, "Herald", hero)
+
+        monkeypatch.setattr(Player, "create", create)
+        match = FakeMatch(NO_BOT, "playing")
+        asyncio.run(match._apply(make_snapshot([(10, ""), (11, "")])))
+
+        assert [(p.id, p.rank_display_name, p.profile_unknown) for p in match.players.values()] == [
+            (10, "Herald", False),
+            (11, "Unknown", True),
+        ]
+
+        asyncio.run(match._apply(make_snapshot([(10, "a"), (11, "b")])))
+
+        assert [(p.id, p.rank_display_name, p.hero) for p in match.players.values()] == [
+            (10, "Herald", "a"),
+            (11, "Herald", "b"),
+        ]
+        assert requested == [10, 11, 11]
+
 
 class UnpolledPlayingMatch(PlayingMatch):
     """Playing match that doesn't poll on its own."""

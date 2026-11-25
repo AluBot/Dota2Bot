@@ -275,20 +275,29 @@ class TrackedMatch(LiveMatch, ABC):
 
         # Heroes get picked over time, so known players only get their hero refreshed.
         # Only the new players need their profile cards fetched, and hidden profiles have none to fetch.
+        # Players whose profile card didn't come last time get another try.
         players: dict[int, Player] = {}
         new_players: dict[int, asyncio.Task[Player]] = {}
         async with asyncio.TaskGroup() as group:
             for slot, (account_id, hero) in enumerate(snapshot.players):
                 player = self.players.get(slot)
-                if player is not None and player.id == account_id:
+                if player is not None and player.id == account_id and not player.profile_unknown:
                     player.hero = hero
                     players[slot] = player
                 elif account_id in ANONYMOUS_ACCOUNT_IDS:
                     players[slot] = Player.hidden(account_id, slot, hero)
                 else:
-                    new_players[slot] = group.create_task(Player.create(self.bot, account_id, slot, hero))
+                    new_players[slot] = group.create_task(self._create_player(account_id, slot, hero))
         players.update({slot: task.result() for slot, task in new_players.items()})
         self.players = dict(sorted(players.items()))
+
+    async def _create_player(self, account_id: int, player_slot: int, hero: Hero) -> Player:
+        # one player's silent profile card shouldn't fail the whole match
+        try:
+            return await Player.create(self.bot, account_id, player_slot, hero)
+        except TimeoutError:
+            log.warning("{!r}: no profile card for account {}, showing it as unknown", self, account_id)
+            return Player.unknown(account_id, player_slot, hero)
 
 
 class SpectatingMatch(TrackedMatch):
