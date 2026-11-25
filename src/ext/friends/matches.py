@@ -110,7 +110,7 @@ class LiveMatch:
     Attributes
     ----------
     state
-        Where the match is in its life cycle, see ``MatchState``:
+        Where the match is in its life cycle:
 
         * ``Starting`` - the match data is being collected, i.e. players and heroes are not all known yet.
         * ``Live`` - the data is complete (and saved, for playing matches). The match is still going.

@@ -12,6 +12,7 @@ import datetime as dt
 import inspect
 import pprint
 import sys
+import time
 from typing import TYPE_CHECKING, override
 
 import steam
@@ -46,6 +47,10 @@ log = prefixed_logger("👥")
 GC_READY_TIMEOUT = 11 * 60  # seconds the Game Coordinator gets to get ready before the bot is restarted
 FRIEND_LIST_RETRY_DELAY = 30  # seconds before another attempt to get the bot's friend list
 MAX_FAILED_LOOKUPS = 17  # pending matches that failed this many outcome lookups are ignored
+# Seconds between outcome lookups of a pending match: doubles after every failed lookup, up to the max.
+# With 17 lookups that's about an hour, long enough for a match a friend has left early to end.
+LOOKUP_RETRY_BASE = 20
+LOOKUP_RETRY_MAX = 5 * 60
 MATCH_HISTORY_MAX_AGE = dt.timedelta(hours=48)
 LIVE_MATCH_MAX_AGE = dt.timedelta(hours=8)
 MATCHES_KEPT_PER_FRIEND = 20
@@ -83,6 +88,8 @@ class FriendsCog(commands.Cog[Dota2Bot]):
         self.live_match_batcher = LiveMatchBatcher(lambda lobby_ids: self.bot.live_matches(lobby_ids=lobby_ids))
 
         self._reported_statuses: set[str] = set()
+        # pending match id -> `time.monotonic()` of its next outcome lookup, only for matches that failed one
+        self._next_lookup: dict[int, float] = {}
         # (friend id, match id) -> start time of match history entries that can't be saved
         self._unstorable_history: dict[tuple[int, int], dt.datetime] = {}
 
@@ -272,7 +279,12 @@ class FriendsCog(commands.Cog[Dota2Bot]):
         elif isinstance(live, PlayingMatch) and live.state == MatchState.Live:
             log.info("{!r}: pending, the last friend {!r} left", live, friend)
             live.state = MatchState.Pending
-            await self.bot.pool.execute(queries.UPDATE_MATCH_STATE, MatchState.Pending, live.id)
+            try:
+                await self.bot.pool.execute(queries.UPDATE_MATCH_STATE, MatchState.Pending, live.id)
+            except Exception:
+                # Not raised further: the caller still has to attach the friend to their next match.
+                # The row stays live, so the hourly match history sync is what fills its outcome.
+                log.exception("{!r}: failed to save the pending state", live)
 
     async def _resume_match(self, live: PlayingMatch, friend: Friend) -> None:
         """Make a pending match live again, because a friend has come back into it, e.g. after a disconnect.
@@ -282,7 +294,13 @@ class FriendsCog(commands.Cog[Dota2Bot]):
         """
         log.info("{!r}: live again, the friend {!r} came back", live, friend)
         live.state = MatchState.Live
-        await self.bot.pool.execute(queries.RESUME_MATCH, MatchState.Live, live.id)
+        if live.id is not None:
+            self._next_lookup.pop(live.id, None)
+        try:
+            await self.bot.pool.execute(queries.RESUME_MATCH, MatchState.Live, live.id)
+        except Exception:
+            # the outcome lookups would only fail until the friend leaves again, which saves the state anyway
+            log.exception("{!r}: failed to save the live state", live)
 
     @tasks.loop(seconds=20)
     async def process_pending_matches(self) -> None:
@@ -290,6 +308,8 @@ class FriendsCog(commands.Cog[Dota2Bot]):
 
         Runs all the time: with no pending matches it's one cheap query every 20 seconds.
         That also picks up matches left pending by the previous run.
+        A match whose lookup has failed waits longer and longer before the next one, up to ``LOOKUP_RETRY_MAX``,
+        so a friend who has left a match early doesn't make the bot give up before the match ends.
         An exception would stop the loop for good, so it survives all of them, database errors included.
 
         Notes
@@ -305,27 +325,51 @@ class FriendsCog(commands.Cog[Dota2Bot]):
             log.exception("Failed to get the pending matches")
             return
 
+        pending_ids = {row["match_id"] for row in rows}
+        for match_id in self._next_lookup.keys() - pending_ids:
+            del self._next_lookup[match_id]
+
+        now = time.monotonic()
         for row in rows:
             match_id = row["match_id"]
+            if self._next_lookup.get(match_id, now) > now:
+                continue
             try:
-                await self._look_up_outcome(match_id)
+                await self._look_up_outcome(match_id, row["failed"])
             except Exception:
-                # e.g. Game Coordinator timeouts or a database hiccup
+                # e.g. a database hiccup
                 log.exception("Failed to get the outcome of the match {}", match_id)
 
-    async def _look_up_outcome(self, match_id: int) -> None:
-        """Save the outcome of a pending match, or count a failed attempt if it's not known yet."""
+    async def _look_up_outcome(self, match_id: int, failed: int) -> None:
+        """Save the outcome of a pending match, or count a failed attempt if it's not known yet.
+
+        Parameters
+        ----------
+        match_id
+            The pending match.
+        failed
+            How many lookups of this match have failed so far.
+        """
         try:
             # If friend disconnects before ancient falls (e.g., preemptive disconnects or
             # when game is "Safe to leave") then ``.minimal`` won't give any results as the game
             # is still live but friend's RP is different.
             minimal = await self.bot.create_partial_match(match_id).minimal()
-        except dota2.MatchNotFound:
-            # matches that failed too many times get ignored by `SELECT_PENDING_MATCH_IDS`
+        except (dota2.MatchNotFound, TimeoutError) as exc:
+            # Timeouts count too, otherwise a match the Game Coordinator never answers about is looked up forever.
+            # Matches that failed too many times get ignored by `SELECT_PENDING_MATCH_IDS`.
+            delay = min(LOOKUP_RETRY_BASE * 2**failed, LOOKUP_RETRY_MAX)
+            self._next_lookup[match_id] = time.monotonic() + delay
             await self.bot.pool.execute(queries.UPDATE_MATCH_FAILED, match_id)
+            log.debug("Outcome of the match {} is unknown ({!r}), next lookup in {}s", match_id, exc, delay)
             return
 
         await self.bot.pool.execute(queries.UPDATE_MATCH_OUTCOME, minimal.outcome, match_id, MatchState.Completed)
+        self._next_lookup.pop(match_id, None)
+        # Otherwise the match in memory stays pending, and a friend coming back to it would make it live again.
+        for live in self.play_matches.values():
+            if live.id == match_id:
+                live.state = MatchState.Completed
         log.info("Match {} is completed with the outcome {!r}", match_id, minimal.outcome)
 
     # --- match history and database care ---

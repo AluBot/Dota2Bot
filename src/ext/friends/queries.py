@@ -48,11 +48,15 @@ INSERT_MATCH_PLAYER = """
     VALUES ($1, $2, $3, $4)
     ON CONFLICT (friend_id, match_id) DO NOTHING;
 """
-UPDATE_MATCH_STATE = "UPDATE dota_matches SET live = $1 WHERE match_id = $2;"
+# A match with a known outcome is completed for good, whatever the bot still thinks of it in memory.
+UPDATE_MATCH_STATE = "UPDATE dota_matches SET live = $1 WHERE match_id = $2 AND outcome IS NULL;"
 # A friend came back into a pending match (e.g. reconnected): the lookups made while it was still going don't count.
 RESUME_MATCH = "UPDATE dota_matches SET live = $1, failed = 0 WHERE match_id = $2 AND outcome IS NULL;"
 
-SELECT_PENDING_MATCH_IDS = "SELECT match_id FROM dota_matches WHERE outcome IS NULL AND live = $1 AND failed < $2;"
+SELECT_PENDING_MATCH_IDS = """
+    SELECT match_id, failed FROM dota_matches
+    WHERE outcome IS NULL AND live = $1 AND failed < $2;
+"""
 UPDATE_MATCH_FAILED = "UPDATE dota_matches SET failed = failed + 1 WHERE match_id = $1;"
 UPDATE_MATCH_OUTCOME = "UPDATE dota_matches SET outcome = $1, live = $3 WHERE match_id = $2;"
 

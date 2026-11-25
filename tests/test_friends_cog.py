@@ -50,6 +50,7 @@ def make_cog(pool: FakePool) -> FriendsCog:
     cog.play_matches = {}
     cog.spectate_matches = {}
     cog._reported_statuses = set()
+    cog._next_lookup = {}
     cog._unstorable_history = {}
     return cog
 
@@ -100,6 +101,73 @@ class TestReconnect:
         assert match.state == MatchState.Pending
         assert pool.executed[-1] == (queries.UPDATE_MATCH_STATE, (MatchState.Pending, 7))
 
+    def test_failing_to_save_the_pending_state_does_not_raise(self, caplog: pytest.LogCaptureFixture) -> None:
+        cog = make_cog(FakePool(broken=True))
+        match = make_pending_match(cog)
+        match.state = MatchState.Live
+        friend = make_friend()
+        friend.live_match = match
+        match.friends.add(friend)
+
+        asyncio.run(cog.conclude_match(friend))
+
+        assert match.state == MatchState.Pending
+        assert "failed to save the pending state" in caplog.text
+
+
+def pending_rows(pool: FakePool, *, failed: int = 0) -> None:
+    async def fetch(_query: str, *_args: Any) -> list[dict[str, Any]]:
+        return [{"match_id": 7, "failed": failed}]
+
+    pool.fetch = fetch  # ty: ignore[invalid-assignment]
+
+
+class TestOutcomeLookup:
+    def test_completed_match_is_not_resumed(self) -> None:
+        pool = FakePool()
+        pending_rows(pool)
+        cog = make_cog(pool)
+        match = make_pending_match(cog)
+
+        async def minimal() -> Any:
+            return SimpleNamespace(outcome=dota2.MatchOutcome.RadiantVictory)
+
+        cog.bot.create_partial_match = lambda _: SimpleNamespace(minimal=minimal)  # ty: ignore[invalid-assignment]
+        asyncio.run(cog.process_pending_matches.coro(cog))
+        assert match.state == MatchState.Completed
+
+        # the friend's Rich Presence shows the finished match once more, then they leave it
+        friend = make_friend()
+        asyncio.run(cog.analyze_rich_presence(friend))
+        asyncio.run(cog.conclude_match(friend))
+
+        assert match.state == MatchState.Completed
+        assert not any(query in {queries.RESUME_MATCH, queries.UPDATE_MATCH_STATE} for query, _ in pool.executed)
+
+    def test_timeout_counts_as_a_failed_lookup_and_backs_off(self) -> None:
+        pool = FakePool()
+        pending_rows(pool, failed=3)
+        cog = make_cog(pool)
+        lookups = 0
+
+        async def minimal() -> Any:
+            nonlocal lookups
+            lookups += 1
+            raise TimeoutError
+
+        cog.bot.create_partial_match = lambda _: SimpleNamespace(minimal=minimal)  # ty: ignore[invalid-assignment]
+        asyncio.run(cog.process_pending_matches.coro(cog))
+        asyncio.run(cog.process_pending_matches.coro(cog))
+
+        assert lookups == 1
+        assert pool.executed == [(queries.UPDATE_MATCH_FAILED, (7,))]
+
+    def test_matches_no_longer_pending_are_forgotten(self) -> None:
+        cog = make_cog(FakePool())
+        cog._next_lookup[7] = 0.0
+        asyncio.run(cog.process_pending_matches.coro(cog))
+        assert cog._next_lookup == {}
+
 
 class TestFriendRemove:
     def test_removed_friend_is_forgotten_and_leaves_their_match(self) -> None:
@@ -132,7 +200,7 @@ class TestLoopsSurviveDatabaseErrors:
         pool = FakePool(broken=True)
 
         async def fetch(_query: str, *_args: Any) -> list[dict[str, Any]]:
-            return [{"match_id": 7}]
+            return [{"match_id": 7, "failed": 0}]
 
         pool.fetch = fetch  # ty: ignore[invalid-assignment]
         cog = make_cog(pool)
