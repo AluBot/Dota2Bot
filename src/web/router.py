@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Annotated, cast
 import steam
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Security, status
 from fastapi.security import APIKeyHeader
+from steam.ext import dota2
 
 from config import env
 from core import PendingInvite
@@ -198,7 +199,7 @@ async def minimal(match_id: int, request: Request) -> schemas.MinimalMatch:
     with gc_timeout():
         try:
             match = await bot.create_partial_match(match_id).minimal()
-        except ValueError:
+        except dota2.MatchNotFound:
             # e.g. practice lobbies leave no trace in the match history
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

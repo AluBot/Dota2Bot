@@ -9,6 +9,8 @@ import datetime as dt
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
+from steam.ext import dota2
+
 from core import PendingInvite
 from ext.friends import queries
 from ext.friends.cog import FriendsCog
@@ -136,7 +138,7 @@ class TestLoopsSurviveDatabaseErrors:
         cog = make_cog(pool)
 
         async def minimal() -> Any:
-            raise ValueError
+            raise dota2.MatchNotFound(None, match_id=7)
 
         cog.bot.create_partial_match = lambda _: SimpleNamespace(minimal=minimal)  # ty: ignore[invalid-assignment]
         asyncio.run(cog.process_pending_matches.coro(cog))

@@ -335,7 +335,7 @@ class PlayingMatch(TrackedMatch):
         """Whether Dota keeps a trace of this match.
 
         Practice lobbies leave none: there is no match to inspect in match history, opendota, etc.,
-        and ``.minimal()`` errors out with ``ValueError`` for them.
+        and ``.minimal()`` raises ``dota2.MatchNotFound`` for them.
         """
         return self.lobby_type != dota2.LobbyType.Practice
 

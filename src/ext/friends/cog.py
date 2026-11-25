@@ -15,7 +15,7 @@ import sys
 from typing import TYPE_CHECKING, override
 
 import steam
-from steam.ext import commands
+from steam.ext import commands, dota2
 
 from core import Dota2Bot
 from shared import clock
@@ -36,8 +36,6 @@ from .presence import (
 )
 
 if TYPE_CHECKING:
-    from steam.ext import dota2
-
     from .matches import LiveMatch
 
 __all__ = ("FriendsCog",)
@@ -322,7 +320,7 @@ class FriendsCog(commands.Cog[Dota2Bot]):
             # when game is "Safe to leave") then ``.minimal`` won't give any results as the game
             # is still live but friend's RP is different.
             minimal = await self.bot.create_partial_match(match_id).minimal()
-        except ValueError:
+        except dota2.MatchNotFound:
             # matches that failed too many times get ignored by `SELECT_PENDING_MATCH_IDS`
             await self.bot.pool.execute(queries.UPDATE_MATCH_FAILED, match_id)
             return
