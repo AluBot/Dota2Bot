@@ -23,7 +23,7 @@ from shared.apis.local import MatchState
 from shared.concepts import prefixed_logger, tasks
 
 from . import queries
-from .matches import PlayingMatch, SpectatingMatch, TrackedMatch, UnsupportedMatch, get_or_create
+from .matches import LiveMatchBatcher, PlayingMatch, SpectatingMatch, TrackedMatch, UnsupportedMatch, get_or_create
 from .models import Friend
 from .presence import (
     Dashboard,
@@ -81,6 +81,8 @@ class FriendsCog(commands.Cog[Dota2Bot]):
         super().__init__()
         self.play_matches: dict[str, PlayingMatch] = {}  # watchable game id -> match
         self.spectate_matches: dict[str, SpectatingMatch] = {}  # watching server -> match
+        # playing matches look their data up together, one Game Coordinator request per polling round
+        self.live_match_batcher = LiveMatchBatcher(lambda lobby_ids: self.bot.live_matches(lobby_ids=lobby_ids))
 
         self._reported_statuses: set[str] = set()
         # (friend id, match id) -> start time of match history entries that can't be saved
@@ -204,7 +206,9 @@ class FriendsCog(commands.Cog[Dota2Bot]):
             case Dashboard():
                 await self.conclude_match(friend)
             case PlayingPartialMatch(watchable_game_id=game_id):
-                live = get_or_create(self.play_matches, game_id, lambda: PlayingMatch(self.bot, game_id))
+                live = get_or_create(
+                    self.play_matches, game_id, lambda: PlayingMatch(self.bot, game_id, self.live_match_batcher)
+                )
                 await self._attach(friend, live)
                 if live.state == MatchState.Pending:
                     await self._resume_match(live, friend)

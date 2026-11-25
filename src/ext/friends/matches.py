@@ -8,6 +8,7 @@ What the friends are doing in Dota 2 matches and the code that collects the data
 from __future__ import annotations
 
 import asyncio
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, override
@@ -24,7 +25,7 @@ from .models import Player
 
 if TYPE_CHECKING:
     import datetime as dt
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
 
     from steam.ext.dota2 import Hero
 
@@ -35,6 +36,7 @@ if TYPE_CHECKING:
 
 __all__ = (
     "LiveMatch",
+    "LiveMatchBatcher",
     "PlayingMatch",
     "SpectatingMatch",
     "TrackedMatch",
@@ -48,8 +50,58 @@ log = prefixed_logger("🎮")
 
 POLL_INTERVAL = 10.1  # seconds between attempts to get live match data
 POLL_ATTEMPTS = 30  # attempts before giving up on a live match
+BATCH_WINDOW = 0.5  # seconds a live match lookup waits for others to share one Game Coordinator request
 # Steam gives these ids to players with hidden profiles, they can't identify a player in the database.
 ANONYMOUS_ACCOUNT_IDS = frozenset({0, 4294967295})
+
+
+def seconds_until_next_poll() -> float:
+    """Get how long to wait before the next polling attempt.
+
+    Attempts happen on a shared clock, every ``POLL_INTERVAL`` seconds, so that the lookups of all live matches
+    come in together and can share one Game Coordinator request. The wait is at least half an interval.
+    """
+    delay = POLL_INTERVAL - time.monotonic() % POLL_INTERVAL
+    return delay if delay >= POLL_INTERVAL / 2 else delay + POLL_INTERVAL
+
+
+class LiveMatchBatcher:
+    """Look up live matches by lobby id, with one Game Coordinator request for lookups that come in together.
+
+    A lookup waits ``BATCH_WINDOW`` seconds for others, then all of them are sent as one ``live_matches`` request.
+    """
+
+    def __init__(self, fetch: Callable[[list[int]], Awaitable[list[dota2.LiveMatch]]]) -> None:
+        self._fetch = fetch
+        self._pending: dict[int, list[asyncio.Future[dota2.LiveMatch | None]]] = {}
+        self._flush_task: asyncio.Task[None] | None = None
+
+    async def get(self, lobby_id: int) -> dota2.LiveMatch | None:
+        """Get the live match with this lobby id, ``None`` if the Game Coordinator doesn't know it (yet)."""
+        future: asyncio.Future[dota2.LiveMatch | None] = asyncio.get_running_loop().create_future()
+        self._pending.setdefault(lobby_id, []).append(future)
+        if self._flush_task is None:
+            self._flush_task = asyncio.create_task(self._flush())
+        return await future
+
+    async def _flush(self) -> None:
+        await asyncio.sleep(BATCH_WINDOW)
+        # lookups made from here on go into the next request
+        pending, self._pending = self._pending, {}
+        self._flush_task = None
+        futures = [future for waiting in pending.values() for future in waiting]
+        try:
+            matches = await self._fetch(list(pending))
+        except Exception as exc:  # ruff: ignore[blind-except] # handed to every lookup in the request
+            for future in futures:
+                if not future.done():
+                    future.set_exception(exc)
+            return
+        by_lobby_id = {match.lobby_id: match for match in matches}
+        for lobby_id, waiting in pending.items():
+            for future in waiting:
+                if not future.done():  # its match could have been cancelled meanwhile
+                    future.set_result(by_lobby_id.get(lobby_id))
 
 
 class LiveMatch:
@@ -194,7 +246,7 @@ class TrackedMatch(LiveMatch, ABC):
     async def _poll(self) -> None:
         for attempt in range(POLL_ATTEMPTS):
             if attempt:
-                await asyncio.sleep(POLL_INTERVAL)
+                await asyncio.sleep(seconds_until_next_poll())
             try:
                 await self._apply(await self.fetch_snapshot())
             except Exception:  # ruff: ignore[blind-except] # logged, ruff doesn't recognize loguru's `opt`
@@ -271,8 +323,9 @@ class SpectatingMatch(TrackedMatch):
 class PlayingMatch(TrackedMatch):
     """A match the friend is playing. The data comes from the Game Coordinator and gets saved to the database."""
 
-    def __init__(self, bot: Dota2Bot, watchable_game_id: str) -> None:
+    def __init__(self, bot: Dota2Bot, watchable_game_id: str, batcher: LiveMatchBatcher) -> None:
         super().__init__(bot, "playing")
+        self._batcher: LiveMatchBatcher = batcher
         self.watchable_game_id: str = watchable_game_id
         self.lobby_id: int = int(watchable_game_id)
         self.start()
@@ -288,7 +341,7 @@ class PlayingMatch(TrackedMatch):
 
     @override
     async def fetch_snapshot(self) -> MatchSnapshot:
-        live = next(iter(await self.bot.live_matches(lobby_ids=[self.lobby_id])), None)
+        live = await self._batcher.get(self.lobby_id)
         if live is None:
             msg = f'FindTopSourceTVGames did not find watchable_game_id "{self.watchable_game_id}".'
             raise LookupError(msg)

@@ -12,8 +12,15 @@ from typing import TYPE_CHECKING, Any, override
 import pytest
 from steam.ext import dota2
 
-from ext.friends import queries
-from ext.friends.matches import MatchSnapshot, PlayingMatch, TrackedMatch, get_or_create
+from ext.friends import matches, queries
+from ext.friends.matches import (
+    LiveMatchBatcher,
+    MatchSnapshot,
+    PlayingMatch,
+    TrackedMatch,
+    get_or_create,
+    seconds_until_next_poll,
+)
 from ext.friends.models import Player
 from shared import clock
 from shared.apis.local import MatchState
@@ -148,7 +155,7 @@ class UnpolledPlayingMatch(PlayingMatch):
 class TestOnLive:
     def make_match(self, pool: FakePool) -> PlayingMatch:
         bot: Any = SimpleNamespace(pool=pool)
-        match = UnpolledPlayingMatch(bot, "123")
+        match = UnpolledPlayingMatch(bot, "123", LiveMatchBatcher(fetch_nothing))
         match.id = 7
         match.lobby_type = dota2.LobbyType.Ranked
         match.state = MatchState.Live
@@ -170,3 +177,75 @@ class TestOnLive:
         asyncio.run(match.on_live())
 
         assert pool.executed[-1] == (queries.UPDATE_MATCH_STATE, (MatchState.Pending, 7))
+
+
+async def fetch_nothing(_lobby_ids: list[int]) -> list[Any]:
+    return []
+
+
+@pytest.fixture
+def no_batch_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(matches, "BATCH_WINDOW", 0)
+
+
+@pytest.mark.usefixtures("no_batch_window")
+class TestLiveMatchBatcher:
+    def test_lookups_made_together_share_one_request(self) -> None:
+        requests: list[list[int]] = []
+
+        async def fetch(lobby_ids: list[int]) -> list[Any]:
+            requests.append(lobby_ids)
+            return [SimpleNamespace(lobby_id=lobby_id) for lobby_id in lobby_ids if lobby_id != 3]
+
+        async def main() -> tuple[Any, ...]:
+            batcher = LiveMatchBatcher(fetch)
+            return await asyncio.gather(batcher.get(1), batcher.get(2), batcher.get(3), batcher.get(1))
+
+        results = asyncio.run(main())
+        assert requests == [[1, 2, 3]]
+        assert [getattr(result, "lobby_id", None) for result in results] == [1, 2, None, 1]
+
+    def test_later_lookups_get_their_own_request(self) -> None:
+        requests: list[list[int]] = []
+
+        async def fetch(lobby_ids: list[int]) -> list[Any]:
+            requests.append(lobby_ids)
+            return []
+
+        async def main() -> None:
+            batcher = LiveMatchBatcher(fetch)
+            await batcher.get(1)
+            await batcher.get(2)
+
+        asyncio.run(main())
+        assert requests == [[1], [2]]
+
+    def test_a_failed_request_fails_every_lookup_in_it(self) -> None:
+        async def fetch(_lobby_ids: list[int]) -> list[Any]:
+            raise TimeoutError
+
+        async def main() -> tuple[Any, ...]:
+            batcher = LiveMatchBatcher(fetch)
+            return await asyncio.gather(batcher.get(1), batcher.get(2), return_exceptions=True)
+
+        assert [type(result) for result in asyncio.run(main())] == [TimeoutError, TimeoutError]
+
+    def test_a_cancelled_lookup_does_not_break_the_others(self) -> None:
+        async def fetch(lobby_ids: list[int]) -> list[Any]:
+            return [SimpleNamespace(lobby_id=lobby_id) for lobby_id in lobby_ids]
+
+        async def main() -> Any:
+            batcher = LiveMatchBatcher(fetch)
+            cancelled = asyncio.create_task(batcher.get(1))
+            kept = asyncio.create_task(batcher.get(2))
+            await asyncio.sleep(0)
+            cancelled.cancel()
+            return await kept
+
+        assert asyncio.run(main()).lobby_id == 2
+
+
+def test_polls_wait_for_the_shared_clock() -> None:
+    for _ in range(100):
+        delay = seconds_until_next_poll()
+        assert matches.POLL_INTERVAL / 2 <= delay <= matches.POLL_INTERVAL * 1.5
