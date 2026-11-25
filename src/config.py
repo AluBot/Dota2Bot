@@ -32,6 +32,7 @@ class Env(EnvConfig):
     WEBHOOK_NOTIFICATION: str
     WEBHOOK_LOGGER: str
     LOCAL_API_KEY: str
+    HEALTHCHECK_URL: str = ""
     # loguru level names
     LOG_LEVEL: Literal["TRACE", "DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 

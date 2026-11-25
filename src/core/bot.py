@@ -15,7 +15,7 @@ from steam import PersonaState
 from steam.ext import dota2
 
 from config import env
-from shared import fmt
+from shared import fmt, systemd
 from shared.apis.dota2com import Dota2comClient
 from shared.apis.steam_web import SteamWebAPIClient
 from shared.concepts import prefixed_logger
@@ -103,6 +103,7 @@ class Dota2Bot(BotBase, dota2.Bot):
         await self.load_extension("ext.datafeed")
         await self.load_extension("ext.dm")
         await self.load_extension("ext.friends")
+        await self.load_extension("ext.health")
 
     async def _before_login(self) -> None:
         """Start helping services for steam."""
@@ -131,6 +132,7 @@ class Dota2Bot(BotBase, dota2.Bot):
         log.info("Dota 2 Bot: Ready {}, now waiting till Game Coordinator is ready;", self.user.name)
         await self.wait_until_gc_ready()
         log.info("Dota 2 Game Coordinator: Ready")
+        systemd.sd_notify("READY=1")
 
     @override
     async def on_error(self, event: str, error: Exception, *args: Any, **kwargs: Any) -> None:
