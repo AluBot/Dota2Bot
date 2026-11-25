@@ -51,6 +51,15 @@ class HealthCog(commands.Cog[Dota2Bot]):
             return
         async with self.bot.session.get(env.HEALTHCHECK_URL, timeout=aiohttp.ClientTimeout(total=10)) as response:
             response.raise_for_status()
+        log.debug("Healthcheck: pinged")
+
+    @healthcheck.before_loop
+    async def wait_for_game_coordinator(self) -> None:
+        """Start checking once the Game Coordinator is ready, not ~30 seconds earlier when Steam is.
+
+        Otherwise the first check after every restart is skipped and the first ping comes 5 minutes later.
+        """
+        await self.bot.wait_until_gc_ready()
 
 
 async def setup(bot: Dota2Bot) -> None:
