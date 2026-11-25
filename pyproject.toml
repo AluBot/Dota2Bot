@@ -22,15 +22,10 @@ dependencies = [
 ]
 
 [dependency-groups]
-dev = [
-    "asyncpg-stubs",
-    "pytest",
-    "ty",
-    "ruff",
-]
+dev = ["asyncpg-stubs", "pytest", "ty", "ruff"]
 
 [tool.uv.sources]
-steamio = { git = "https://github.com/Aluerie/steam.py", rev = "introduce-ext.dota2" }
+steamio = { git = "https://github.com/Aluerie/steam.py", rev = "main" }
 
 
 [tool.pytest.ini_options]
@@ -54,7 +49,10 @@ unsound-yield = "ignore"
 line-length = 120
 target-version = "py314"
 preview = true
-exclude = [".venv", "src/shared/tests"] # the submodule's own tests run in its own CI
+exclude = [
+    ".venv",
+    "src/shared/tests",
+] # the submodule's own tests run in its own CI
 src = ["src"]
 
 
@@ -129,9 +127,9 @@ flake8-quotes.inline-quotes = "double"
 ]
 "tests/*.py" = [
     "hardcoded-password-string", # fake secrets
-    "private-member-access", # tests poke at internals on purpose
-    "unused-method-argument", # test doubles mirror the signatures they replace
-    "unused-async", # test doubles of async functions have to be async
+    "private-member-access",     # tests poke at internals on purpose
+    "unused-method-argument",    # test doubles mirror the signatures they replace
+    "unused-async",              # test doubles of async functions have to be async
 ]
 
 [tool.ruff.format]
