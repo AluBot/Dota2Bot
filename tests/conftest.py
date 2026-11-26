@@ -18,8 +18,7 @@ if TYPE_CHECKING:
 
 FAKE_ENV = {
     "PROJECT_NAME": "Dota2Bot",
-    "POSTGRES_VPS": "postgresql://fake",
-    "POSTGRES_HOME": "postgresql://fake",
+    "DATABASE_URL": "postgresql://fake",
     "STEAM_IRENESTEST_USERNAME": "fake",
     "STEAM_IRENESTEST_PASSWORD": "fake",
     "STEAM_IRENESBOT_USERNAME": "fake",
