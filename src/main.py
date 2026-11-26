@@ -3,7 +3,6 @@
 """Main."""
 
 import asyncio
-import platform
 from pathlib import Path
 
 import aiohttp
@@ -35,9 +34,8 @@ ASCII_STARTING_UP_ART = r"""
 
 async def start_the_bot() -> None:
     """Start the bot."""
-    postgres_url = env.POSTGRES_VPS if platform.system() == "Linux" else env.POSTGRES_HOME
-    pool: db.PoolTypedWithAny = await db.create_pool(
-        postgres_url, "dota2bot", application_name="dota2bot", migrations_dir=MIGRATIONS_DIR
+    pool = await db.try_create_pool(
+        env.DATABASE_URL, search_path="dota2bot", application_name="dota2bot", migrations_dir=MIGRATIONS_DIR
     )
 
     async with (

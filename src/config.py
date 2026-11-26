@@ -21,8 +21,7 @@ class EnvConfig(BaseSettings):
 
 class Env(EnvConfig):
     PROJECT_NAME: str
-    POSTGRES_VPS: str
-    POSTGRES_HOME: str
+    DATABASE_URL: str  # on the VPS, the systemd unit sets it, overriding .env
     STEAM_IRENESTEST_USERNAME: str
     STEAM_IRENESTEST_PASSWORD: str
     STEAM_IRENESBOT_USERNAME: str
