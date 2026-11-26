@@ -53,7 +53,6 @@ def launch() -> None:
     """Set up logging and run the bot together with its local API."""
     with logs.setup_logging(
         starting_up_art=ASCII_STARTING_UP_ART,
-        filename="d2b.log",
         level=env.LOG_LEVEL,
     ):
         try:

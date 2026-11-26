@@ -40,7 +40,7 @@ Put the same `LOCAL_API_KEY` into the `.env` of this bot and of every bot that c
 
 The bot logs with [loguru](https://github.com/Delgan/loguru) (messages use `{}` placeholders, not `%s`).
 The libraries' standard `logging` records are routed into loguru too, see `shared.concepts.logs`.
-Logs go to the console and to `.temp/d2b.log` (rotated). Set `LOG_LEVEL=DEBUG` in `.env` to see the debug logs
+Logs go to the console, which is the systemd journal on the VPS (`journalctl -u dota2bot`). Set `LOG_LEVEL=DEBUG` in `.env` to see the debug logs
 (any loguru level works, e.g. `TRACE`).
 The local API doesn't log every request, but it does log the ones rejected for a wrong `X-API-Key`.
 
