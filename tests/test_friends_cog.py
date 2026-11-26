@@ -1,4 +1,4 @@
-# Copyright (C) 2020-present, Irene Adler ❤ (@Aluerie).
+# Copyright (C) 2020-present, Irene Adler 💜 (@Aluerie).
 # Licensed under MPL-2.0, see the LICENSE file for details.
 """Tests for the friends cog: what happens to matches when friends come and go, and the loops surviving errors."""
 
