@@ -28,7 +28,7 @@ for a Twitch bot.
 | `src/ext/friends/` | Rich Presence, live matches, match history (`presence`, `models`, `matches`, `queries`, `cog`) |
 | `src/ext/datafeed.py` | Daily refresh of the Dota 2 items in the database |
 | `src/shared/` | Git submodule with the code shared with other bots |
-| `sql/` | Database schema |
+| `migrations/` | Database schema, applied in order |
 
 ## Local API
 
@@ -51,7 +51,7 @@ Requires Python 3.14 and [uv](https://docs.astral.sh/uv/).
 ```sh
 git clone --recurse-submodules <repo url>
 cp .env.example .env   # fill in the values
-# run sql/01_initial.sql against your PostgreSQL database (it expects the `irenesbot.tokens` table)
+# run migrations/*.sql in order against your PostgreSQL database, after IreBot's (it needs `irenesbot.tokens`)
 make run
 ```
 
