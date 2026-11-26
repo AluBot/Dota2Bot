@@ -4,6 +4,7 @@
 
 import asyncio
 import platform
+from pathlib import Path
 
 import aiohttp
 import uvicorn
@@ -17,6 +18,9 @@ from web.router import router
 
 LOCAL_API_HOST = "127.0.0.1"
 LOCAL_API_PORT = 8000
+
+# The bot's database migrations, applied when it starts (`shared.concepts.migrations`).
+MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "migrations"
 
 # generated at https://patorjk.com/software/taag/ using "Standard" font
 ASCII_STARTING_UP_ART = r"""
@@ -32,7 +36,9 @@ ASCII_STARTING_UP_ART = r"""
 async def start_the_bot() -> None:
     """Start the bot."""
     postgres_url = env.POSTGRES_VPS if platform.system() == "Linux" else env.POSTGRES_HOME
-    pool: db.PoolTypedWithAny = await db.create_pool(postgres_url, "dota2bot", application_name="dota2bot")
+    pool: db.PoolTypedWithAny = await db.create_pool(
+        postgres_url, "dota2bot", application_name="dota2bot", migrations_dir=MIGRATIONS_DIR
+    )
 
     async with (
         aiohttp.ClientSession() as session,

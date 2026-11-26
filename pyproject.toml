@@ -34,7 +34,10 @@ testpaths = ["tests"]
 
 
 [tool.ty.src]
-exclude = ["src/shared/tests"] # the submodule's own tests run in its own CI
+exclude = [
+    "src/shared/tests", # the submodule's own tests run in its own CI
+    "src/shared/timeparse.py", # needs `dateparser`, which this bot doesn't use
+]
 
 [tool.ty.rules]
 all = "error"

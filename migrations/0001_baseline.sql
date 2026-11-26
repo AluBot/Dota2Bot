@@ -5,8 +5,6 @@ IreBot reads these tables too (`mmrbot`). `dota_accounts.twitch_id` references I
 so on an empty database IreBot's baseline runs first.
 --------------------------------------------------------------------------------------------------------------------- */
 
-CREATE SCHEMA dota2bot;
-
 /* --- Dota constants ----------------------------------------------------------------------------------------------- */
 
 CREATE TABLE dota2bot.dota_constants_items (
