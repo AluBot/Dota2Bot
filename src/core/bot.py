@@ -100,6 +100,8 @@ class Dota2Bot(BotBase, dota2.Bot):
 
     async def before_login(self) -> None:
         """Before login."""
+        # first, so the other extensions' startup logs are mirrored too
+        await self.load_extension("ext.logs")
         await self.load_extension("ext.datafeed")
         await self.load_extension("ext.dm")
         await self.load_extension("ext.friends")
