@@ -27,6 +27,7 @@ FAKE_ENV = {
     "STEAM_API_KEY": "fake",
     "WEBHOOK_ERROR": "https://fake.invalid/error",
     "WEBHOOK_NOTIFICATION": "https://fake.invalid/notification",
+    "WEBHOOK_LOGGER": "https://fake.invalid/logger",
     "LOCAL_API_KEY": "test-local-api-key",
 }
 # not `setdefault`: a real `.env` or environment must never leak into the tests

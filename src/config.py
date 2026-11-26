@@ -30,6 +30,7 @@ class Env(EnvConfig):
     STEAM_API_KEY: str
     WEBHOOK_ERROR: str
     WEBHOOK_NOTIFICATION: str
+    WEBHOOK_LOGGER: str
     LOCAL_API_KEY: str
     HEALTHCHECK_URL: str = ""
     # loguru level names
