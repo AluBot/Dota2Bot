@@ -10,7 +10,7 @@ import uvicorn
 
 from config import env
 from core.bot import Dota2Bot
-from shared import systemd
+from shared import runtime
 from shared.concepts import db, logs
 from web.app import MyFastAPI
 from web.router import router
@@ -50,7 +50,7 @@ async def start_the_bot() -> None:
         async with asyncio.TaskGroup() as group:
             group.create_task(bot.login())
             group.create_task(server.serve())
-            group.create_task(systemd.watchdog_loop())
+            group.create_task(runtime.watchdog_loop())
 
 
 def launch() -> None:
@@ -60,7 +60,7 @@ def launch() -> None:
         level=env.LOG_LEVEL,
     ):
         try:
-            asyncio.run(start_the_bot())
+            asyncio.run(runtime.run_until_sigterm(start_the_bot()))
         except KeyboardInterrupt:
             print("Aborted! The bot was interrupted with `KeyboardInterrupt`!")  # ruff: ignore[print]
 

@@ -14,7 +14,7 @@ from steam.ext import commands
 
 from config import env
 from core import Dota2Bot
-from shared import systemd
+from shared import runtime
 from shared.concepts import loop, prefixed_logger
 
 log = prefixed_logger("🩺")
@@ -25,8 +25,8 @@ class HealthCog(commands.Cog[Dota2Bot]):
 
     def __init__(self) -> None:
         super().__init__()
-        # only the VPS (a systemd service) pings, so a bot running at home doesn't keep the check green
-        if env.HEALTHCHECK_URL and systemd.is_systemd_service():
+        # only prod (`BOT_ENV=prod`) pings, so a bot running at home doesn't keep the check green
+        if env.HEALTHCHECK_URL and runtime.is_prod():
             self.healthcheck.add_exception_type(aiohttp.ClientError, TimeoutError)
             self.healthcheck.start()
 

@@ -15,7 +15,7 @@ from steam import PersonaState
 from steam.ext import dota2
 
 from config import env
-from shared import fmt, systemd
+from shared import fmt, runtime
 from shared.apis.dota2com import Dota2comClient
 from shared.apis.steam_web import SteamWebAPIClient
 from shared.concepts import prefixed_logger
@@ -134,7 +134,7 @@ class Dota2Bot(BotBase, dota2.Bot):
         log.info("Dota 2 Bot: Ready {}, now waiting till Game Coordinator is ready;", self.user.name)
         await self.wait_until_gc_ready()
         log.info("Dota 2 Game Coordinator: Ready")
-        systemd.sd_notify("READY=1")
+        runtime.notify_ready()
 
     @override
     async def on_error(self, event: str, error: Exception, *args: Any, **kwargs: Any) -> None:
