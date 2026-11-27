@@ -8,10 +8,26 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    services:
+      # a throwaway PostgreSQL for tests/test_sql.py
+      postgres:
+        image: postgres:19
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+      - name: Checkout IreBot's migrations
+        uses: actions/checkout@v6
+        with:
+          repository: Aluerie/IrenesBot
+          path: .deps/IreBot
+          sparse-checkout: migrations
       - uses: astral-sh/setup-uv@v6
       - name: Install dependencies
         run: uv sync --locked
@@ -23,6 +39,9 @@ jobs:
         run: uv run ty check .
       - name: Test
         run: uv run pytest
+        env:
+          SQL_CHECK_POSTGRES: postgresql://postgres:postgres@localhost:5432/postgres
+          IREBOT_MIGRATIONS: .deps/IreBot/migrations
 
   deploy:
     # a broken commit must not reach the server
